@@ -28,7 +28,6 @@ jobs:
       CARGO_BUILD_JOBS: '4'
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/codex-selection-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -36,6 +35,7 @@ jobs:
           persist-credentials: false
       - name: Observe native worker and reserve build headroom
         run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/codex-selection-target" >> "$GITHUB_ENV"
           test "$(uname -s)" = Darwin
           test "$(uname -m)" = arm64
           df -h "$RUNNER_TEMP"
@@ -68,8 +68,12 @@ jobs:
           root = pathlib.Path(os.environ['RUNNER_TEMP'], 'selection-receipts')
           binary = pathlib.Path(os.environ['CARGO_TARGET_DIR'], 'debug/codex')
           assert '--selection-observer-fd' in (root / 'help.txt').read_text()
+          digest = hashlib.sha256()
+          with binary.open('rb') as stream:
+              for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                  digest.update(chunk)
           receipt = {'source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-                     'binary_sha256': hashlib.file_digest(binary.open('rb'), 'sha256').hexdigest(),
+                     'binary_sha256': digest.hexdigest(),
                      'machine': platform.machine(), 'run': os.environ['GITHUB_RUN_ID'],
                      'native_tui_compiled': True, 'native_cli_built': True,
                      'interactive_switch_qualified': False, 'task_tool_handoff_qualified': False}
