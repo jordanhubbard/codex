@@ -200,6 +200,7 @@ fn explicit_restart_applies_feature_overrides_and_preserves_saved_settings() -> 
             .command()
             .args(["app-server", "daemon", "restart"])
             .args(args)
+            .env("CODEX_DIAGNOSTIC_SOCKET_OWNER", "1")
             .output()?;
         eprintln!(
             "SOCK736 restart previous={previous_pid:?} success={} stderr={}",
