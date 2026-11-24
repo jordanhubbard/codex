@@ -608,9 +608,7 @@ async fn short_exec_publishes_completion_while_tool_result_remains_paused() -> a
                 );
                 config
                     .permissions
-                    .set_permission_profile(
-                        codex_protocol::models::PermissionProfile::Disabled,
-                    )
+                    .set_permission_profile(codex_protocol::models::PermissionProfile::Disabled)
                     .expect("disable sandbox for process lifecycle test");
             },
         )
