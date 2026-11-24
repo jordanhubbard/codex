@@ -1182,6 +1182,7 @@ async fn user_network_approval_once_session_and_denial_semantics(
     assert!(test.config.permissions.network.is_some());
     assert!(test.session_configured.network_proxy.is_some());
     let environment = test.executor_environment().selection();
+    eprintln!("NET734 prompts ready for {requirements_table}");
     let approval = prompts
         .remove(NETWORK_TEST_TARGET)
         .context("missing matching-host prompt")?;
@@ -1194,6 +1195,7 @@ async fn user_network_approval_once_session_and_denial_semantics(
     )));
     assert_eq!(approval.approval_id.as_deref(), None);
     let first_approval_call_id = approval.call_id.clone();
+    eprintln!("NET734 approving once {}", approval.call_id);
     assert!(!approval.turn_id.is_empty());
     assert_eq!(approval.cwd, environment.cwd.clone().into());
     assert_eq!(
@@ -1208,12 +1210,14 @@ async fn user_network_approval_once_session_and_denial_semantics(
         })
         .await?;
     // The first execution may finish before or after the next manual prompt arrives.
+    eprintln!("NET734 submitted first decision");
     let mut pending = HashSet::from(matching_calls);
     let mut granted_for_session = false;
     tokio::time::timeout(Duration::from_secs(30), async {
         while !pending.is_empty() {
             match test.codex.next_event().await?.msg {
                 EventMsg::ExecApprovalRequest(approval) => {
+                    eprintln!("NET734 next approval {}", approval.call_id);
                     assert!(!granted_for_session, "duplicate prompt after session grant");
                     assert_eq!(approval.command, ["network-access", NETWORK_TEST_TARGET]);
                     assert_eq!(
@@ -1230,8 +1234,13 @@ async fn user_network_approval_once_session_and_denial_semantics(
                         })
                         .await?;
                     granted_for_session = true;
+                    eprintln!("NET734 submitted session decision");
                 }
                 EventMsg::ExecCommandEnd(end) => {
+                    eprintln!(
+                        "NET734 command ended {} exit {}",
+                        end.call_id, end.exit_code
+                    );
                     assert!(
                         pending.remove(end.call_id.as_str()),
                         "unexpected completion: {end:?}"
@@ -1241,7 +1250,7 @@ async fn user_network_approval_once_session_and_denial_semantics(
                 EventMsg::TurnComplete(_) => {
                     anyhow::bail!("turn completed with port 81 still pending")
                 }
-                _ => {}
+                other => eprintln!("NET734 event {:?}", std::mem::discriminant(&other)),
             }
         }
         anyhow::Ok(())
