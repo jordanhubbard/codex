@@ -39,6 +39,14 @@ async fn tui_mcp_handoff_rejects_stale_publication_and_survives_mcp_refresh() {
     let published = session.get_config().await;
     assert_eq!(
         session
+            .rebind_tui_mcp_transport(Arc::clone(&published), new_url, new_url, auth)
+            .await
+            .unwrap(),
+        ConfigRefreshOutcome::Published
+    );
+    assert!(Arc::ptr_eq(&published, &session.get_config().await));
+    assert_eq!(
+        session
             .rebind_tui_mcp_transport(before, old_url, "http://127.0.0.1:54323/mcp", auth)
             .await
             .unwrap(),

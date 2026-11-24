@@ -21,6 +21,12 @@ on:
 permissions:
   contents: read
 
+# A new source revision supersedes only this branch's native qualifier.
+# Keep different prototype branches independent and avoid duplicate PR/manual builds.
+concurrency:
+  group: downstream-native-${{ github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash

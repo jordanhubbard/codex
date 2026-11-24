@@ -43,6 +43,14 @@ impl Session {
             {
                 return Ok(ConfigRefreshOutcome::Rejected);
             }
+            if config.mcp_servers.get() == expected_config.mcp_servers.get()
+                && config.config_layer_stack.effective_config()
+                    == expected_config.config_layer_stack.effective_config()
+            {
+                // Attaching the same viewer again must not tear down an already
+                // correct connection or disturb an in-flight tool call.
+                return Ok(ConfigRefreshOutcome::Published);
+            }
             state.session_configuration.original_config_do_not_use = Arc::new(config.clone());
             state.guardian_config_snapshots.clear();
             self.mark_mcp_runtime_dirty(McpRefreshReason::McpConfigReloaded);
