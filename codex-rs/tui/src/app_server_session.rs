@@ -897,6 +897,8 @@ impl AppServerSession {
     /// Carry capabilities that may exist only in memory when the optional cache is unwritable.
     pub(crate) fn inherit_task_tool_capabilities(&mut self, previous: &Self) {
         self.task_tool_threads.extend(&previous.task_tool_threads);
+        self.unconfirmed_task_tool_handoffs
+            .extend(&previous.unconfirmed_task_tool_handoffs);
     }
 
     pub(crate) fn task_tools_available(&self, thread_id: ThreadId) -> bool {

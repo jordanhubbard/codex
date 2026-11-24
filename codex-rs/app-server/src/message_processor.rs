@@ -1066,6 +1066,7 @@ impl MessageProcessor {
             | ClientRequest::ThreadResume { .. }
             | ClientRequest::ThreadRevert { .. }
             | ClientRequest::ThreadSettingsUpdate { .. }
+            | ClientRequest::ThreadTuiMcpRebind { .. }
             | ClientRequest::TurnSettingsUpdate { .. }
             | ClientRequest::ThreadDelete { .. }
             | ClientRequest::ThreadArchive { .. } => (Some(self.turn_admission.admit()?), false),

@@ -360,6 +360,7 @@ impl AppServerSession {
                 );
             } else {
                 self.unconfirmed_task_tool_handoffs.remove(&thread_id);
+                self.remember_task_tool_thread(thread_id);
             }
         }
         if let Some(subscribed) = &mut self.attachment_subscribed {
