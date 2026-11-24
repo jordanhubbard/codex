@@ -1435,7 +1435,7 @@ See the Codex keymap documentation for supported actions and examples."
                         );
                     crate::selection_observer::publish(
                         selection_is_settled
-                            .then(|| app.active_thread_id)
+                            .then_some(app.active_thread_id)
                             .flatten()
                             .map(|id| id.to_string()),
                     );

@@ -103,6 +103,12 @@ impl ThreadToolTransport {
 
 type ToolConnection = Arc<RwLock<Option<(AppServerRequestHandle, AppEventSender)>>>;
 
+pub(crate) struct DynamicToolMcpServerOptions {
+    pub(crate) handoff_project: Option<std::path::PathBuf>,
+    pub(crate) worktrees: Option<crate::managed_worktree_tools::ManagedWorktreeTools>,
+    pub(crate) sidebar_backend: Option<crate::backend_id::BackendId>,
+}
+
 pub(crate) struct DynamicToolMcpServer {
     connection: ToolConnection,
     config: Value,
@@ -152,13 +158,16 @@ impl DynamicToolMcpServer {
     pub(crate) async fn start(
         request_handle: AppServerRequestHandle,
         mut thread_start_params: ThreadStartParams,
-        handoff_project: Option<std::path::PathBuf>,
         features: Features,
         app_event_tx: AppEventSender,
         status_updates: broadcast::Sender<ThreadStatusChangedNotification>,
-        worktrees: Option<crate::managed_worktree_tools::ManagedWorktreeTools>,
-        sidebar_backend: Option<crate::backend_id::BackendId>,
+        options: DynamicToolMcpServerOptions,
     ) -> std::io::Result<Self> {
+        let DynamicToolMcpServerOptions {
+            handoff_project,
+            worktrees,
+            sidebar_backend,
+        } = options;
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
         let authorization = Arc::new(format!("Bearer {}", Uuid::new_v4()));

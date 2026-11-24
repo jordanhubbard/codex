@@ -45,6 +45,7 @@ use crate::app_event::PermissionProfileSelection;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::FeedbackAudience;
 use crate::dynamic_tools_mcp::DynamicToolMcpServer;
+use crate::dynamic_tools_mcp::DynamicToolMcpServerOptions;
 use crate::dynamic_tools_mcp::ThreadToolTransport;
 use crate::legacy_core::config::Config;
 use crate::local_settings::LocalSettings;
@@ -849,12 +850,14 @@ impl AppServerSession {
             DynamicToolMcpServer::start(
                 self.request_handle(),
                 thread_start_params,
-                Some(config.cwd.to_path_buf()),
                 config.features.get().clone(),
                 app_event_tx,
                 status_updates,
-                worktrees,
-                sidebar_backend,
+                DynamicToolMcpServerOptions {
+                    handoff_project: Some(config.cwd.to_path_buf()),
+                    worktrees,
+                    sidebar_backend,
+                },
             )
             .await?,
         );
