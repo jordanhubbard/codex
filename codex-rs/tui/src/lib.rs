@@ -1122,7 +1122,7 @@ pub async fn run_main(
 ) -> std::io::Result<AppExitInfo> {
     selection_observer::initialize(cli.selection_observer_fd)?;
     system_motion::initialize().await;
-    startup_recovery::scope(async move {
+    let result = startup_recovery::scope(async move {
         // Startup retains a large future for the whole session. Keep it off callers' stacks,
         // which also need room to construct a replacement chat widget on `/new`.
         match boxed_future!(startup_orchestration::run_main_inner(
@@ -1153,7 +1153,9 @@ pub async fn run_main(
             result => result,
         }
     })
-    .await
+    .await;
+    selection_observer::publish(None);
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1,0 +1,84 @@
+name: Downstream TUI selection observer
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/tui-selection-observer.yml'
+      - 'codex-rs/tui/src/selection_observer.rs'
+      - 'codex-rs/tui/src/app/startup.rs'
+      - 'codex-rs/tui/src/cli.rs'
+      - 'codex-rs/tui/src/lib.rs'
+      - 'codex-rs/cli/src/main.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native:
+    # This is a downstream integration qualifier, not an upstream release job.
+    if: github.repository != 'openai/codex'
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      CARGO_TARGET_DIR: ${{ runner.temp }}/codex-selection-target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Observe native worker and reserve build headroom
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          df -h "$RUNNER_TEMP"
+          memory_pressure
+          python3 - <<'PY'
+          import os, pathlib, shutil
+          available = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
+          # Source checkout, dependency checkout, compilation and retained binary.
+          if available < 25 * 1024**3:
+              raise SystemExit('Native build requires 25 GiB free including reserve')
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'selection-receipts').mkdir()
+          PY
+      - name: Install the pinned native Rust toolchain
+        working-directory: codex-rs
+        run: rustup toolchain install 1.99.1 --profile minimal --component rust-src
+      - name: Compile full TUI and test observation controls
+        working-directory: codex-rs
+        run: |
+          cargo test --locked -p codex-tui --lib selection_observer::tests -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/native-module-tests.log"
+      - name: Build the actual native CLI and verify capability
+        working-directory: codex-rs
+        run: |
+          cargo build --locked -p codex-cli --bin codex 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/native-build.log"
+          "$CARGO_TARGET_DIR/debug/codex" --help > "$RUNNER_TEMP/selection-receipts/help.txt"
+          "$CARGO_TARGET_DIR/debug/codex" --version > "$RUNNER_TEMP/selection-receipts/version.txt"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform, shutil, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'], 'selection-receipts')
+          binary = pathlib.Path(os.environ['CARGO_TARGET_DIR'], 'debug/codex')
+          assert '--selection-observer-fd' in (root / 'help.txt').read_text()
+          receipt = {'source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+                     'binary_sha256': hashlib.file_digest(binary.open('rb'), 'sha256').hexdigest(),
+                     'machine': platform.machine(), 'run': os.environ['GITHUB_RUN_ID'],
+                     'native_tui_compiled': True, 'native_cli_built': True,
+                     'interactive_switch_qualified': False, 'task_tool_handoff_qualified': False}
+          (root / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          shutil.copy2(binary, root / 'codex-selection-prototype')
+          PY
+      - name: Retain native artifact and original failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-macos-selection-prototype
+          path: ${{ runner.temp }}/selection-receipts

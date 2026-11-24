@@ -5,39 +5,64 @@
 //! selection. The pipe carries no prompts, paths, credentials or control requests.
 
 use std::sync::Mutex;
-use std::sync::OnceLock;
 
-static OBSERVER: OnceLock<Mutex<Option<Observer>>> = OnceLock::new();
+// run_main may be retried inside this same process after transport recovery.
+// Descriptor ownership belongs to the launcher invocation, not one UI attempt.
+static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
+    descriptor: None,
+    observer: None,
+});
+
+struct Registry {
+    descriptor: Option<i32>,
+    observer: Option<Observer>,
+}
+
+impl Registry {
+    fn initialize(&mut self, fd: Option<i32>) -> std::io::Result<()> {
+        if self.descriptor.is_some() {
+            if self.descriptor != fd {
+                return Err(std::io::Error::other(
+                    "selection observation channel changed during retry",
+                ));
+            }
+            // Never construct a second File for the same raw descriptor. If a
+            // failed writer was already dropped, its number may now belong to
+            // an unrelated file; disabled observation stays disabled.
+        } else if let Some(fd) = fd {
+            self.observer = Some(Observer::from_descriptor(fd)?);
+            self.descriptor = Some(fd);
+        }
+        self.publish(None);
+        Ok(())
+    }
+
+    fn publish(&mut self, thread_id: Option<String>) {
+        if let Some(writer) = self.observer.as_mut()
+            && writer.publish(thread_id).is_err()
+        {
+            self.observer = None;
+        }
+    }
+}
 
 pub(crate) fn initialize(fd: Option<i32>) -> std::io::Result<()> {
-    let observer = fd.map(Observer::from_descriptor).transpose()?;
-    if let Some(observer) = observer {
-        OBSERVER
-            .set(Mutex::new(Some(observer)))
-            .map_err(|_| std::io::Error::other("selection observer already initialized"))?;
-        publish(None);
-    }
-    Ok(())
+    REGISTRY
+        .lock()
+        .map_err(|_| std::io::Error::other("selection observer unavailable"))?
+        .initialize(fd)
 }
 
 pub(crate) fn enabled() -> bool {
-    OBSERVER
-        .get()
-        .is_some_and(|observer| observer.lock().is_ok_and(|writer| writer.is_some()))
+    REGISTRY
+        .lock()
+        .is_ok_and(|registry| registry.observer.is_some())
 }
 
 pub(crate) fn publish(thread_id: Option<String>) {
-    let Some(observer) = OBSERVER.get() else {
-        return;
-    };
-    let Ok(mut observer) = observer.lock() else {
-        return;
-    };
-    if let Some(writer) = observer.as_mut()
-        && writer.publish(thread_id).is_err()
-    {
+    if let Ok(mut registry) = REGISTRY.lock() {
         // Observation loss must never stop coding or redirect output to the PTY.
-        *observer = None;
+        registry.publish(thread_id);
     }
 }
 
@@ -176,6 +201,34 @@ mod tests {
     use std::io::BufRead;
     use std::os::fd::AsRawFd;
     use std::os::fd::IntoRawFd;
+
+    #[test]
+    fn ui_retry_retains_descriptor_ownership_and_invalidates_old_selection() -> std::io::Result<()>
+    {
+        let (reader, writer) = std::io::pipe()?;
+        let fd = writer.into_raw_fd();
+        let mut registry = Registry {
+            descriptor: None,
+            observer: None,
+        };
+        registry.initialize(Some(fd))?;
+        registry.publish(Some(uuid::Uuid::new_v4().to_string()));
+        registry.initialize(Some(fd))?;
+        assert!(registry.initialize(None).is_err());
+        assert!(registry.initialize(Some(fd + 10000)).is_err());
+        let next = uuid::Uuid::new_v4().to_string();
+        registry.publish(Some(next.clone()));
+        drop(registry);
+        let records: Vec<serde_json::Value> = std::io::BufReader::new(reader)
+            .lines()
+            .map(|line| serde_json::from_str(&line.unwrap()).unwrap())
+            .collect();
+        assert_eq!(records.len(), 4);
+        assert!(records[0]["thread_id"].is_null());
+        assert!(records[2]["thread_id"].is_null());
+        assert_eq!(records[3]["thread_id"], next);
+        Ok(())
+    }
 
     #[test]
     fn selection_switch_and_loss_are_ordered_without_replaying_unchanged_state()
