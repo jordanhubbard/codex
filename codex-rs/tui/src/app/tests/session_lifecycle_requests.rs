@@ -3033,6 +3033,39 @@ async fn tui_mcp_handoff_scenario() -> Result<()> {
         .await?;
     let started = server.start_thread(&app.config).await?;
     let thread_id = started.session.thread_id;
+    let handle = server.request_handle();
+    // A newly allocated empty thread has no persisted history to read. Create
+    // one through the real native shell path, without making any model request.
+    let _: codex_app_server_protocol::ThreadShellCommandResponse = handle
+        .request_typed(ClientRequest::ThreadShellCommand {
+            request_id: AppServerRequestId::String("handoff-owned-history".into()),
+            params: codex_app_server_protocol::ThreadShellCommandParams {
+                thread_id: thread_id.to_string(),
+                command: "echo native-handoff-history".into(),
+                timeout_ms: Some(5_000),
+            },
+        })
+        .await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = server
+                .next_event()
+                .await
+                .expect("native shell event stream");
+            if let codex_app_server_client::AppServerEvent::ServerNotification(notification) =
+                event.event
+                && let ServerNotification::TurnCompleted(completed) = *notification
+                && completed.thread_id == thread_id.to_string()
+            {
+                assert_eq!(
+                    completed.turn.status,
+                    codex_app_server_protocol::TurnStatus::Completed
+                );
+                break;
+            }
+        }
+    })
+    .await?;
     let old = match server.thread_tool_transport() {
         crate::dynamic_tools_mcp::ThreadToolTransport::Mcp(server) => server,
         _ => panic!("expected a viewer-owned MCP transport"),
@@ -3051,7 +3084,6 @@ async fn tui_mcp_handoff_scenario() -> Result<()> {
     let params = replacement
         .handoff_params(thread_id, app.config.cwd.to_str().unwrap())
         .unwrap();
-    let handle = server.request_handle();
     let other_project = tempdir()?;
     let mut wrong_project = params.clone();
     wrong_project.cwd = other_project.path().to_string_lossy().into_owned();
@@ -3090,8 +3122,28 @@ async fn tui_mcp_handoff_scenario() -> Result<()> {
             },
         }
     ).await?;
-    assert_ne!(response.is_error, Some(true));
-    assert_eq!(replacement.call_count(), 1);
+    let diagnostic = response
+        .content
+        .iter()
+        .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // These are owned fixture errors; redact UUID capabilities even here.
+    let uuid = regex_lite::Regex::new(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    )?;
+    let diagnostic = uuid.replace_all(&diagnostic, "<uuid>");
+    let diagnostic: String = diagnostic.chars().take(1024).collect();
+    assert_eq!(
+        replacement.call_count(),
+        1,
+        "replacement route: {diagnostic}"
+    );
+    assert_ne!(
+        response.is_error,
+        Some(true),
+        "native MCP read: {diagnostic}"
+    );
     let text = response
         .content
         .iter()
@@ -3099,6 +3151,11 @@ async fn tui_mcp_handoff_scenario() -> Result<()> {
         .expect("native task read content");
     let read: serde_json::Value = serde_json::from_str(text)?;
     assert_eq!(read["thread"]["id"], thread_id.to_string());
+    assert!(
+        read["turns"]
+            .as_array()
+            .is_some_and(|turns| !turns.is_empty())
+    );
     let still_same = server.thread_read(thread_id, false).await?;
     assert_eq!(still_same.id, thread_id.to_string());
     server.shutdown().await?;
