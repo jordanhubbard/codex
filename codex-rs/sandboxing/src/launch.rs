@@ -141,8 +141,18 @@ impl WrappedSandboxCommand {
     pub fn shell_snapshot_replay_mut(
         &mut self,
         expected: &[String],
+        shell_options: &[&str],
     ) -> Option<(&mut String, &mut String, &mut HashMap<String, String>)> {
-        let index = self.shell_script_index(expected)?;
+        let mut index = self.shell_script_index(expected)?;
+        if !shell_options.is_empty() {
+            // Options belong to the matched inner shell, never its enclosing sandbox launcher.
+            self.request.command.splice(
+                index - 1..index - 1,
+                shell_options.iter().copied().map(str::to_owned),
+            );
+            self.inner_arg_count += shell_options.len();
+            index += shell_options.len();
+        }
         let [flag, script] = self.request.command[index - 1..].first_chunk_mut()?;
         Some((flag, script, &mut self.request.env))
     }
