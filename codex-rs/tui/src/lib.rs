@@ -212,6 +212,7 @@ mod screen_reader;
 mod service_tier_resolution;
 mod session_archive_commands;
 mod session_lock;
+mod selection_observer;
 mod session_log;
 mod session_queue_commands;
 mod session_resume;
@@ -1119,6 +1120,7 @@ pub async fn run_main(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
+    selection_observer::initialize(cli.selection_observer_fd)?;
     system_motion::initialize().await;
     startup_recovery::scope(async move {
         // Startup retains a large future for the whole session. Keep it off callers' stacks,
