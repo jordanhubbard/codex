@@ -48,5 +48,5 @@ jobs:
           sudo -n stat -c '%A %a %U:%G %n' /run /run/fence-launcher || true
           sudo -n findmnt --target "/run/fence-launcher/fence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/action/bin/fence" --output TARGET,SOURCE,FSTYPE,OPTIONS || true
           sudo -n systemctl show "fence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus || true
-          sudo -n journalctl -k --since '-5 minutes' --no-pager -n 250 | rg -i 'fence|apparmor|denied' || true
-          sudo -n journalctl --since '-5 minutes' --no-pager -n 300 | rg -i 'fence.*(permission|denied|executable|failed)|apparmor.*DENIED' || true
+          sudo -n journalctl -k --since '-5 minutes' --no-pager -n 250 | grep -Ei 'fence|apparmor|denied' || true
+          sudo -n journalctl --since '-5 minutes' --no-pager -n 300 | grep -Ei 'fence.*(permission|denied|executable|failed)|apparmor.*DENIED' || true
