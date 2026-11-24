@@ -16,6 +16,7 @@ use super::LocalThreadStore;
 use super::create_thread;
 use crate::AppendThreadItemsParams;
 use crate::CreateThreadParams;
+use crate::InheritedHistoryVisibility;
 use crate::ResumeThreadParams;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
@@ -27,6 +28,11 @@ pub(super) async fn create_thread(
     store: &LocalThreadStore,
     params: CreateThreadParams,
 ) -> ThreadStoreResult<()> {
+    if params.inherited_history_visibility == InheritedHistoryVisibility::ModelContextOnly {
+        return Err(ThreadStoreError::Unsupported {
+            operation: "model_context_only_inherited_history",
+        });
+    }
     let thread_id = params.thread_id;
     let inherited_cursor = if params.initial_window_id.allocation().is_some()
         && let (Some(parent), Some(base)) = (params.forked_from_id, params.history_base)
@@ -560,7 +566,9 @@ async fn write_and_project(
         RolloutWriteOp::Persist => recorder.persist().await.map_err(thread_store_io_error)?,
         RolloutWriteOp::Flush => recorder.flush().await.map_err(thread_store_io_error)?,
     }
-    if matches!(history_mode, ThreadHistoryMode::Paginated) {
+    if matches!(history_mode, ThreadHistoryMode::Paginated)
+        && !store.config.sqlite.prefers_rollback_journal().await
+    {
         // SQLite is a rebuildable view and must never get ahead of canonical history.
         let rollout_path = recorder.rollout_path();
         // Only the plain file's length is a decoded JSONL byte offset.

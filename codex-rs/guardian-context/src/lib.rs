@@ -23,6 +23,7 @@ use retained_instructions::RetainedUserInstructionsSection;
 use sender_user_messages::SenderUserMessagesSection;
 use transcript::ConversationTranscriptSection;
 
+mod audio_transcripts;
 mod native_tool_call;
 
 pub use action::ActionPresentation;
@@ -30,6 +31,7 @@ pub use action::EnclosingCall;
 pub use action::PlannedAction;
 pub use action::PlannedActionKind;
 pub use action::action_for_review;
+pub use audio_transcripts::AudioTranscript;
 pub use authorization::GuardianRootMessage;
 pub use authorization::RootConversationContent;
 pub use preparation::root::RootAssistantCandidate;
@@ -93,6 +95,7 @@ pub use budget::SECTION_COST_BOUNDARIES;
 pub use budget::SECTION_COST_METRIC;
 pub use budget::SectionCost;
 pub use budget::effective_input_token_limit;
+pub use budget::elastic_sender_text_entry_bytes;
 pub use budget::estimate_input_tokens;
 pub use budget::estimate_input_tokens_from_serialized_len;
 pub use budget::request_token_bucket;
@@ -235,6 +238,16 @@ pub trait SectionHistory: Send + Sync {
     ) -> Box<dyn Iterator<Item = (&ResponseItem, Option<&codex_history::RetainedSource>)> + Send + '_>
     {
         Box::new(self.items().map(|item| (item, None)))
+    }
+
+    /// Returns an item's completed audio transcripts in recording order. The host makes
+    /// them available with the item before its first review and keeps them stable for
+    /// subsequent reviews in the same history generation.
+    fn audio_transcripts_for<'a>(
+        &'a self,
+        _item: &'a ResponseItem,
+    ) -> Box<dyn Iterator<Item = AudioTranscript<'a>> + Send + 'a> {
+        Box::new(std::iter::empty())
     }
 
     /// Bounded host-owned facts from the same snapshot as the current items.

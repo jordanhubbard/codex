@@ -4,7 +4,6 @@
 #[cfg(test)]
 #[path = "executed_tool_calls_direct_tests.rs"]
 mod direct_tests;
-mod mcp_attribution;
 mod request_metadata;
 
 use std::collections::HashMap;
@@ -26,8 +25,6 @@ use codex_model_provider::provider_uses_first_party_auth_path;
 use codex_protocol::ResponseItemId;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::mcp::CallToolResult;
-use codex_protocol::mcp::McpAttribution;
-use codex_protocol::mcp::McpAttributionSource;
 use codex_protocol::models::ExecutedToolCall;
 use codex_protocol::models::ExecutedToolCallArguments;
 use codex_protocol::models::ResponseItem;
@@ -36,6 +33,7 @@ use codex_protocol::models::ToolResultMetadata;
 use codex_protocol::models::executed_tool_call_metadata_bytes;
 use codex_protocol::models::normalize_executed_tool_call_completeness;
 use codex_protocol::openai_models::ToolMode;
+use codex_tool_call_id::ToolCallId;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use uuid::Uuid;
@@ -72,7 +70,6 @@ pub(crate) struct ExecutedToolCalls {
     captures_result_bodies: bool,
     retained_direct_metadata_bytes: Arc<AtomicUsize>,
     pending_direct_calls: Arc<AtomicUsize>,
-    mcp_attribution: mcp_attribution::McpAttributionRecorder,
 }
 
 /// Private bytes belong to one regular task. History keeps only the host-issued IDs.
@@ -270,7 +267,7 @@ struct ExecutedToolCallRecorderState {
     // Keep nested IDs separate so this conservative filter cannot change existing completeness.
     seen_nested_ids: SeenIds,
     can_prove_wait_completion: bool,
-    pending_wrapper_origins: HashSet<String>,
+    pending_wrapper_origins: HashSet<ToolCallId>,
 }
 
 /// Keep each output's calls and completion marker together through replay and pruning.
@@ -282,9 +279,9 @@ struct RetainedToolCalls {
     cell_id: Option<String>,
     runtime_cell_id: Option<CellId>,
     // Invocation IDs stay local and are retained only with their original output's calls.
-    call_index_by_id: HashMap<String, usize>,
+    call_index_by_id: HashMap<ToolCallId, usize>,
     // Track newly backfilled metadata separately from pre-existing observations.
-    truncated_call_index_by_id: HashMap<String, usize>,
+    truncated_call_index_by_id: HashMap<ToolCallId, usize>,
     late_truncated_indices: HashSet<usize>,
     result_metadata_updated: bool,
 }
@@ -323,7 +320,7 @@ enum CellCompletion {
 #[derive(Default)]
 struct RecordedCell {
     output_item_id: Option<ResponseItemId>,
-    pending_calls: IndexMap<String, ExecutedToolCall>,
+    pending_calls: IndexMap<ToolCallId, ExecutedToolCall>,
     completion: CellCompletion,
     originating_call_id: Option<String>,
     truncated_metadata_binding_valid: bool,
@@ -453,7 +450,6 @@ impl ExecutedToolCalls {
             }))),
             retained_direct_metadata_bytes: Arc::new(AtomicUsize::new(0)),
             pending_direct_calls: Arc::new(AtomicUsize::new(0)),
-            mcp_attribution: mcp_attribution::McpAttributionRecorder::new(history),
         }
     }
 
@@ -561,23 +557,6 @@ impl ExecutedToolCalls {
             .filter(|capture| call.permits_result_body(capture.auth_mode))?
             .start_capture(nested_call_id)
     }
-
-    pub(crate) fn record_mcp_source(&self, source: McpAttributionSource) {
-        self.mcp_attribution.record(source);
-    }
-
-    pub(crate) fn mcp_attribution_snapshot(&self) -> McpAttribution {
-        self.mcp_attribution.snapshot()
-    }
-
-    pub(crate) fn mcp_attribution_checkpoint(&self, force: bool) -> Option<(McpAttribution, u64)> {
-        self.mcp_attribution.checkpoint(force)
-    }
-
-    pub(crate) fn mark_mcp_attribution_persisted(&self, revision: u64) {
-        self.mcp_attribution.mark_persisted(revision);
-    }
-
     /// Consult the inventory attached to this exact exec output during actor sampling.
     /// Pending cells can still produce other outputs and have no per-output inventory yet.
     pub(crate) fn exec_output_matches(
@@ -714,7 +693,7 @@ impl ExecutedToolCalls {
         &self,
         item: &mut ResponseItem,
         prepared: Option<(ExecutedToolCall, DirectCallPermit)>,
-        item_id_generator: &codex_protocol::ItemIdGenerator,
+        context_ids: &codex_thread_context_ids::ThreadContextIds,
     ) {
         let Some((mut call, permit)) = prepared else {
             if self.captures_result_bodies
@@ -725,7 +704,7 @@ impl ExecutedToolCalls {
                 && cell.truncated_metadata_binding_valid
             {
                 // Bind nested results to the actual exec/wait output before history projection.
-                crate::session::assign_missing_item_id(item, item_id_generator);
+                crate::session::assign_missing_item_id(item, context_ids);
                 cell.output_item_id = item.id().cloned();
             }
             return;
@@ -739,7 +718,7 @@ impl ExecutedToolCalls {
         {
             return;
         }
-        crate::session::assign_missing_item_id(item, item_id_generator);
+        crate::session::assign_missing_item_id(item, context_ids);
         let keep_live_call = !self.captures_result_bodies
             || state.direct_calls.len() < MAX_PENDING_EXECUTED_TOOL_CALLS
             || item
@@ -806,7 +785,7 @@ impl ExecutedToolCalls {
     pub(crate) fn record_accepted_result(
         &self,
         source: &ToolCallSource,
-        call_id: &str,
+        call_id: &ToolCallId,
         result: &dyn ToolOutput,
     ) {
         if !matches!(source, ToolCallSource::CodeMode { .. }) {
@@ -863,7 +842,7 @@ impl ExecutedToolCalls {
     fn record_nested_tool_call(
         &self,
         cell_id: CellId,
-        call_id: String,
+        call_id: ToolCallId,
         call: ExecutedToolCall,
         original_bytes: usize,
     ) {
@@ -928,7 +907,7 @@ impl ExecutedToolCalls {
     fn record_result_metadata(
         &self,
         source: &ToolCallSource,
-        call_id: &str,
+        call_id: &ToolCallId,
         metadata: ToolResultMetadata,
     ) -> bool {
         let ToolCallSource::CodeMode { cell_id, .. } = source else {

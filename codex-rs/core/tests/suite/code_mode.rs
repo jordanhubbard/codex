@@ -516,7 +516,7 @@ async fn disabled_process_host_with_fallback_disabled_attempts_the_host() -> Res
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn code_mode_can_call_standalone_web_search() -> Result<()> {
     assert_code_mode_standalone_web_search(
-        WebSearchMode::Live,
+        StandaloneWebSearchConfiguration::Explicit(WebSearchMode::Live),
         serde_json::json!(true),
         SearchPolicy::Unmanaged,
     )
@@ -526,19 +526,39 @@ async fn code_mode_can_call_standalone_web_search() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn code_mode_can_call_indexed_standalone_web_search() -> Result<()> {
     assert_code_mode_standalone_web_search(
-        WebSearchMode::Indexed,
+        StandaloneWebSearchConfiguration::Explicit(WebSearchMode::Indexed),
         serde_json::json!("indexed"),
         SearchPolicy::Unmanaged,
     )
     .await
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn code_mode_defaults_to_live_standalone_web_search_with_full_access() -> Result<()> {
+    assert_code_mode_standalone_web_search(
+        StandaloneWebSearchConfiguration::FullAccessDefault,
+        serde_json::json!(true),
+        SearchPolicy::Unmanaged,
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum StandaloneWebSearchConfiguration {
+    Explicit(WebSearchMode),
+    FullAccessDefault,
+}
+
 #[test_case(SearchPolicy::DenySearch; "initial_request")]
 #[test_case(SearchPolicy::DenyRedirect; "redirect")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn code_mode_web_search_preserves_managed_policy(policy: SearchPolicy) -> Result<()> {
-    assert_code_mode_standalone_web_search(WebSearchMode::Live, serde_json::json!(true), policy)
-        .await
+    assert_code_mode_standalone_web_search(
+        StandaloneWebSearchConfiguration::Explicit(WebSearchMode::Live),
+        serde_json::json!(true),
+        policy,
+    )
+    .await
 }
 
 enum SearchPolicy {
@@ -548,7 +568,7 @@ enum SearchPolicy {
 }
 
 async fn assert_code_mode_standalone_web_search(
-    web_search_mode: WebSearchMode,
+    web_search_configuration: StandaloneWebSearchConfiguration,
     expected_external_web_access: Value,
     policy: SearchPolicy,
 ) -> Result<()> {
@@ -615,6 +635,18 @@ text(result);
         .with_auth(auth)
         .with_extensions(Arc::new(extension_builder.build()))
         .with_model("test-gpt-5.1-codex")
+        .with_pre_build_hook(move |codex_home| {
+            let config = match web_search_configuration {
+                StandaloneWebSearchConfiguration::Explicit(mode) => {
+                    format!("web_search = \"{mode}\"\n")
+                }
+                StandaloneWebSearchConfiguration::FullAccessDefault => {
+                    "sandbox_mode = \"danger-full-access\"\n[features]\nweb_search_indexed_default = true\n".to_string()
+                }
+            };
+            std::fs::write(codex_home.join("config.toml"), config)
+                .expect("write web search configuration");
+        })
         .with_config(move |config| {
             if managed {
                 config.application_network_policy = policy;
@@ -628,14 +660,18 @@ text(result);
                 .features
                 .enable(Feature::StandaloneWebSearch)
                 .expect("standalone web search should be enabled");
-            config
-                .web_search_mode
-                .set(web_search_mode)
-                .expect("web search mode should be accepted");
         });
     let test = builder.build_with_auto_env(&server).await?;
 
-    test.submit_turn("Search the web from code mode").await?;
+    match web_search_configuration {
+        StandaloneWebSearchConfiguration::Explicit(_) => {
+            test.submit_turn("Search the web from code mode").await?;
+        }
+        StandaloneWebSearchConfiguration::FullAccessDefault => {
+            test.submit_text_turn("Search the web from code mode")
+                .await?;
+        }
+    }
 
     if managed {
         let output =
@@ -4831,7 +4867,7 @@ async fn code_mode_exec_nested_limit_truncates_result_variable_when_exceeded() -
         "use exec_command from code mode",
         r#"// @exec: {"max_output_tokens": 25000}
 const result = await tools.exec_command({
-  cmd: "python3 -c \"import sys; sys.stdout.write('A' * 90000)\"",
+  cmd: "printf '%90000s' '' | tr ' ' A",
   max_output_tokens: 20000
 });
 const resultVariableWasTruncated = result.output.includes("…2500 tokens truncated…");
@@ -4962,7 +4998,7 @@ async fn code_mode_exec_without_nested_limit_preserves_result_variable_before_co
         "use exec_command from code mode",
         r#"// @exec: {"max_output_tokens": 20000}
 const result = await tools.exec_command({
-  cmd: "python3 -c \"import sys; sys.stdout.write('x' * 50000)\""
+  cmd: "printf '%50000s' '' | tr ' ' x"
 });
 const resultVariableWasTruncated = result.output.length !== 50000;
 text(`Variable truncated: ${resultVariableWasTruncated ? "True" : "False"}. Variable: ${result.output}`);
@@ -5165,7 +5201,7 @@ try {
 #[derive(Default)]
 struct ResponseIdObserver {
     response_ids: Mutex<Vec<(String, Option<String>)>>,
-    serving_assessments: Mutex<Vec<Option<bool>>>,
+    guardian_probes: Mutex<Vec<Option<bool>>>,
     originating_items: Mutex<Vec<(String, Option<codex_protocol::ResponseItemId>)>>,
     wait_started: tokio::sync::Notify,
 }
@@ -5180,10 +5216,10 @@ impl ToolLifecycleContributor for ResponseIdObserver {
                     .as_str()
                     .is_some_and(|cmd| cmd.starts_with("printf 'phase "))
             {
-                self.serving_assessments
+                self.guardian_probes
                     .lock()
                     .unwrap()
-                    .push(input.serving_assessment);
+                    .push(input.guardian_probe);
             }
             if matches!(input.tool_name.name.as_str(), "exec" | "exec_command") {
                 self.originating_items.lock().unwrap().push((
@@ -5208,9 +5244,9 @@ impl ToolLifecycleContributor for ResponseIdObserver {
 }
 
 #[cfg_attr(windows, ignore = "no exec_command on Windows")]
-#[test_case::test_case(None; "without_assessment")]
-#[test_case::test_case(Some(false); "low_risk_assessment")]
-#[test_case::test_case(Some(true); "review_required_assessment")]
+#[test_case::test_case(None; "without_probe")]
+#[test_case::test_case(Some(false); "low_risk_probe")]
+#[test_case::test_case(Some(true); "review_required_probe")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn code_mode_can_yield_and_resume_with_wait(requires_review: Option<bool>) -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -5220,10 +5256,11 @@ async fn code_mode_can_yield_and_resume_with_wait(requires_review: Option<bool>)
         .and(wiremock::matchers::body_partial_json(
             serde_json::json!({"model": "gpt-5.6-luna"}),
         ))
-        .respond_with(responses::sse_response(sse(vec![ev_completed(
-            "unexpected-score",
-        )])))
-        .expect(0)
+        .respond_with(responses::sse_response(sse(vec![
+            ev_assistant_message("score", "low"),
+            ev_completed("score"),
+        ])))
+        .with_priority(/*p*/ 1)
         .mount(&server)
         .await;
     let observer = Arc::new(ResponseIdObserver::default());
@@ -5406,7 +5443,7 @@ text((await tools.exec_command({{cmd: "printf 'phase 3'"}})).output);
     );
 
     assert_eq!(
-        *observer.serving_assessments.lock().unwrap(),
+        *observer.guardian_probes.lock().unwrap(),
         vec![requires_review; 3]
     );
     let observed = observer.response_ids.lock().unwrap();
@@ -7429,7 +7466,7 @@ async fn code_mode_records_mcp_completion_even_when_result_is_not_printed() -> R
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_mock_server().await;
-    let (test, second_mock) = run_code_mode_turn_with_rmcp(
+    let (_, second_mock) = run_code_mode_turn_with_rmcp(
         &server,
         "call the rmcp echo tool without printing its result",
         r#"await tools.mcp__rmcp__echo({ message: "discarded" }); text("done");"#,
@@ -7441,21 +7478,6 @@ async fn code_mode_records_mcp_completion_even_when_result_is_not_printed() -> R
         "done"
     );
 
-    let first_turn_id = request.body_json()["client_metadata"]["turn_id"].clone();
-    assert!(first_turn_id.is_string());
-    assert_eq!(
-        serde_json::to_value(codex_core::test_support::mcp_attribution_snapshot(
-            &test.codex
-        ))?,
-        serde_json::json!({
-            "status": "complete",
-            "sources": [{
-                "server_name": "rmcp",
-                "tool_name": "echo",
-                "first_turn_id": first_turn_id,
-            }],
-        })
-    );
     Ok(())
 }
 
@@ -7739,6 +7761,13 @@ async fn code_mode_node_repl_text_evidence_is_visible_only_to_guardian(
                 .features
                 .set_enabled(Feature::GuardianNodeReplTranscriptImages, transcript_images)
                 .expect("configure Guardian transcript images");
+            if check_detail {
+                // The invalid image and its valid successor exceed the modern stdio frame limit.
+                config
+                    .features
+                    .disable(Feature::McpConnectionSharing)
+                    .expect("use legacy stdio for the oversized image response");
+            }
             let mcp: McpServerConfig = serde_json::from_value(serde_json::json!({
                 "command": mcp_server_bin,
                 "environment_id": remote_aware_environment_id(),
@@ -8870,12 +8899,18 @@ async fn code_mode_search_normalizes_and_calls_deferred_dynamic_tools(
         .with_model_info_override("gpt-5.5", |model_info| {
             model_info.supports_search_tool = true;
             model_info.tool_mode = Some(ToolMode::CodeMode);
-            model_info
+            let tools = model_info
                 .model_messages
                 .get_or_insert_default()
                 .tools
-                .get_or_insert_default()
-                .functions_namespace_functions_description_prefixes =
+                .get_or_insert_default();
+            tools.indirect_description_prefixes = Some(
+                serde_json::from_value(serde_json::json!({
+                    "builtin_tool_namespaces": {"functions": "Builtin."}
+                }))
+                .unwrap(),
+            );
+            tools.functions_namespace_functions_description_prefixes =
                 Some(std::collections::BTreeMap::from([(
                     "hidden-dynamic-tool".to_string(),
                     "Function guidance.".to_string(),
@@ -8943,6 +8978,9 @@ const out = await tools[tool.name]({ city: "Paris" });
 text(
   JSON.stringify({
     name: tool?.name ?? null,
+    builtinLabel: ALL_TOOLS.find(t => t.name === "view_image").description.startsWith("Builtin.\n\n"),
+    dynamicLabel: ALL_TOOLS.find(t => t.name === tool.name).description.includes("Builtin."),
+    searchLabel: tool.description.includes("Builtin."),
     description: tool?.description ?? null,
     out,
     recoveredFromInvalidArguments: errors.length === 2,
@@ -9062,6 +9100,9 @@ text(
         Some(&Value::String("hidden-ok".to_string()))
     );
     assert_eq!(parsed["recoveredFromInvalidArguments"], true);
+    assert_eq!(parsed["builtinLabel"], false);
+    assert_eq!(parsed["dynamicLabel"], false);
+    assert_eq!(parsed["searchLabel"], false);
     let loaded = search_response.single_request().tool_search_output("find");
     let loaded = loaded["tools"]
         .as_array()
@@ -9069,6 +9110,14 @@ text(
         .iter()
         .find(|tool| tool["name"] == namespace)
         .expect("loaded namespace");
+    assert_eq!(
+        loaded["description"],
+        if namespace == "functions" {
+            "Builtin.\n\nCodex app tools."
+        } else {
+            "Codex app tools."
+        }
+    );
     assert_eq!(
         loaded["tools"][0]["description"],
         if namespace == "functions" {

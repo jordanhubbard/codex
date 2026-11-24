@@ -247,6 +247,8 @@ pub(crate) async fn run_pre_tool_use_hooks(
         };
     };
 
+    let reason = reason.trim_end_matches('.');
+
     if (tool_name.name() == "Bash" || tool_name.name() == "apply_patch")
         && let Some(command) = tool_input.get("command").and_then(Value::as_str)
     {
@@ -831,7 +833,7 @@ pub(crate) async fn drain_async_hook_results(
             .iter()
             .filter(|entry| entry.kind == HookOutputEntryKind::Context)
             .map(|entry| codex_hooks::HookContext {
-                text: entry.text.clone(),
+                payload: codex_hooks::HookContextPayload::Text(entry.text.clone()),
                 metadata: codex_protocol::models::ContentItemMetadata::command_hook(),
             })
             .collect::<Vec<_>>();
@@ -912,8 +914,34 @@ fn additional_context_messages(
 ) -> Vec<ResponseItem> {
     additional_contexts
         .into_iter()
-        .map(HookAdditionalContext::new)
-        .map(ContextualUserFragment::into)
+        .map(|context| match context.payload {
+            codex_hooks::HookContextPayload::Text(text) => {
+                ContextualUserFragment::into(HookAdditionalContext::new(text, context.metadata))
+            }
+            codex_hooks::HookContextPayload::EncryptedToolOutput {
+                name,
+                namespace,
+                encrypted_content,
+            } => ResponseItem::FunctionCallOutput {
+                id: None,
+                call_id: None,
+                name: Some(name),
+                namespace,
+                output: codex_protocol::models::FunctionCallOutputPayload::from_content_items(
+                    vec![
+                        codex_protocol::models::FunctionCallOutputContentItem::EncryptedContent {
+                            encrypted_content,
+                        },
+                    ],
+                ),
+                internal_chat_message_metadata_passthrough: Some(
+                    codex_protocol::models::InternalChatMessageMetadataPassthrough {
+                        content_item_metadata: Some(vec![context.metadata]),
+                        ..Default::default()
+                    },
+                ),
+            },
+        })
         .collect()
 }
 

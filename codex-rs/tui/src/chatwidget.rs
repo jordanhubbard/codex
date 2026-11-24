@@ -47,6 +47,7 @@ use crate::app_event::HistoryLookupResponse;
 use crate::app_server_approval_conversions::file_update_changes_to_display;
 use crate::approval_events::ApplyPatchApprovalRequestEvent;
 use crate::approval_events::ExecApprovalRequestEvent;
+use crate::backend_id::BackendId;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::StatusLineSetupView;
 use crate::bottom_pane::StatusSurfacePreviewData;
@@ -137,6 +138,7 @@ use codex_protocol::approvals::GuardianAssessmentStatus;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Settings;
 #[cfg(target_os = "windows")]
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -543,6 +545,7 @@ pub(crate) struct ChatWidget {
     config: Config,
     pub(crate) local_settings: crate::local_settings::LocalSettings,
     pub(crate) config_panel_tui: codex_config::types::Tui,
+    pub(crate) config_panel_reasoning_summary: Option<(BackendId, Option<ReasoningSummary>)>,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
     effective_service_tier: Option<String>,
@@ -993,7 +996,7 @@ impl ChatWidget {
     }
 
     /// Returns the cached metadata for a thread, defaulting to empty if none has been registered.
-    fn collab_agent_metadata(&self, thread_id: ThreadId) -> AgentMetadata {
+    pub(crate) fn collab_agent_metadata(&self, thread_id: ThreadId) -> AgentMetadata {
         self.collab_agent_metadata
             .get(&thread_id)
             .cloned()
@@ -1166,8 +1169,8 @@ impl ChatWidget {
     }
 
     fn sync_context_window_visibility(&mut self) {
-        self.bottom_pane
-            .set_context_window_hidden(self.read_only_history || self.token_usage_pending);
+        let hidden = self.read_only_history || self.token_usage_pending;
+        self.bottom_pane.set_context_window_hidden(hidden);
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
@@ -1552,7 +1555,7 @@ impl ChatWidget {
             .iter()
             .map(|process| history_cell::UnifiedExecProcessDetails {
                 command_display: process.command_display.clone(),
-                recent_chunks: process.recent_chunks.clone(),
+                recent_chunks: process.recent_lines(),
             })
             .collect();
         self.add_to_history(history_cell::new_unified_exec_processes_output(processes));

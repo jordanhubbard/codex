@@ -417,7 +417,16 @@ enabled = true
 
 Codex reads `[network_proxy]` and its alias `[experimental_network]` as
 `[permissions.network]` within each source before merging managed requirements.
-Across sources, use the same surface (legacy or nested). Use at most one top-level spelling per layer.
+Choose the merge operation with the domain syntax under either table name:
+`allowed_domains` and `denied_domains` each replace the previous list of that kind.
+A host in both surviving lists is denied, including when a keyed grant appears between the lists. Use `[permissions.network.domains]` (or
+the legacy table's `domains` map) for per-host updates. Source priority decides
+a shared selector; unrelated keyed rules survive a nonempty list replacement.
+A surviving `allowed_domains = []` clears lower managed grants. An empty domain
+map contributes no updates. Neither operation changes `managed_allowed_domains_only`.
+When layering mirrored declarations, use the same domain operation in both copies.
+Use the same network table spelling across sources when specifying Unix socket paths.
+Use at most one top-level spelling per layer.
 If a layer also sets `[permissions.network]`, both tables must describe the same policy.
 `configRequirements/read` returns the result in `requirements.network`.
 
@@ -539,8 +548,9 @@ Plugin summaries returned by `plugin/list`, `plugin/installed`, `plugin/read`,
 and `plugin/share/list` report effective `enabled` state. When
 `plugins._default.enabled` is configured, an explicit
 `plugins."<plugin-name>@<marketplace-name>".enabled` overrides that default;
-a plugin disabled at its source remains disabled. Omitting the default preserves
-existing source and account enablement. Other plugin settings, including remembered
+a plugin disabled at its source remains disabled. When `_default` is absent,
+an explicit `enabled: false` still disables the plugin without changing its
+installation or account settings. Other plugin settings, including remembered
 tool approvals, inherit the activation default unless `enabled` is explicitly set.
 `plugin/search` retains its discovery behavior: results report `enabled: false`
 while preserving their installation state.
@@ -788,6 +798,31 @@ credential discovery/signing, are disabled while restrictions apply. Supported
 HTTP, WebSocket, and code-mode gRPC requests use the shared destination checks.
 User-directed Git, SSH, shell, and other subprocess traffic retain their existing
 execution and sandbox policies.
+
+### Configuration server sign-in during startup
+
+`codex app-server --print-startup-config` reads requirements without starting
+the app server. If a required configuration server uses OAuth and needs a new
+grant, the command exits with an error whose `data` contains
+`"reason": "configServer"` and `"action": "configServerLogin"`.
+
+When the action is `configServerLogin`, start `codex app-server --startup-oauth`.
+This dedicated stdio connection accepts one JSON request per line without an
+initialize handshake. Each reply echoes the string or integer request ID.
+
+1. After the user chooses Sign in, send
+   `{"id":1,"method":"account/gatewayOAuth/login","params":{"target":{"kind":"configServer"}}}`.
+   The helper resolves the target from local managed requirements.
+2. On this pipe, `account/gatewayOAuth/changed` sends the browser handoff with
+   `{"target":{"kind":"configServer"},"status":"started","authUrl":"..."}`.
+   Open that URL on the user's desktop. Rust handles the callback, token exchange,
+   and credential storage.
+3. The original login request stays pending and returns `{"prompt":null}` on
+   success, or an error on failure. To cancel, send
+   `{"id":2,"method":"account/gatewayOAuth/cancel"}`. Closing stdin also ends the
+   pending attempt.
+4. On success, close the pipe and rerun `--print-startup-config`. Continue startup
+   only with the validated requirements.
 
 # Item history anchors
 

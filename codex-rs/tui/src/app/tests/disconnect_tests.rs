@@ -220,7 +220,7 @@ async fn lost_mutation_reply_preserves_work_without_resubmitting() -> Result<()>
             AppRunControl::Exit(ExitReason::UserRequested)
         ));
     }
-    for command in ["/exit", "/quit"] {
+    for command in ["/exit", "/quit", "/q"] {
         app.chat_widget
             .restore_user_message_to_composer(command.into());
         app.handle_tui_event(&mut tui, &mut session, TuiEvent::Key(KeyCode::Enter.into()))
@@ -308,6 +308,8 @@ async fn disconnected_config_panel_keeps_input() -> Result<()> {
 
     app.handle_tui_event(&mut tui, &mut session, TuiEvent::Key(KeyCode::Enter.into()))
         .await?;
+    let refresh = events.try_recv()?;
+    assert!(matches!(refresh, AppEvent::RefreshConfigReasoningSummary));
     assert!(app.chat_widget.has_active_view());
     app.app_server_target = AppServerTarget::Remote {
         endpoint: crate::resolve_remote_addr("ws://127.0.0.1:9")?,

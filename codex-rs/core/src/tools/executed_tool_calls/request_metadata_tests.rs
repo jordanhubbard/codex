@@ -5,6 +5,7 @@ use codex_protocol::models::ToolResultMetadata;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::ThreadHistoryMode;
+use codex_thread_context_ids_test_support::thread_context_ids;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -18,7 +19,7 @@ impl ExecutedToolCalls {
         call_id: &str,
         metadata: &JsonValue,
     ) -> bool {
-        self.record_result_metadata(source, call_id, ToolResultMetadata::new(metadata))
+        self.record_result_metadata(source, &call_id.into(), ToolResultMetadata::new(metadata))
     }
 
     fn attach_pending_to_prompt(
@@ -78,7 +79,7 @@ fn record_nested_call(
     let call = ExecutedToolCall::new("nested_tool".to_string(), json!({}));
     recorder.record_nested_tool_call(
         cell.clone(),
-        call_id.to_string(),
+        call_id.into(),
         call.clone(),
         /*original_bytes*/ 2,
     );
@@ -97,7 +98,7 @@ fn record_truncated_call(
     );
     recorder.record_nested_tool_call(
         cell.clone(),
-        call_id.to_string(),
+        call_id.into(),
         call.clone(),
         /*original_bytes*/ 9_000,
     );
@@ -116,7 +117,7 @@ fn selected_exec_result_uses_only_the_retained_wrapper_inventory() {
     recorder.start_cell(&cell, "exec");
     recorder.record_nested_tool_call(
         cell.clone(),
-        "inner".to_owned(),
+        "inner".into(),
         ExecutedToolCall::new("normalized-alias__lookup".to_owned(), json!({})),
         /*original_bytes*/ 2,
     );
@@ -220,7 +221,7 @@ async fn capture_only_request_metadata_preserves_late_bindings_and_restores_full
         };
         let output =
             captured_mcp_output(&capture, json!({"content": [{"type": "text", "text": id}]}));
-        recorder.record_accepted_result(&source, id, &output);
+        recorder.record_accepted_result(&source, &id.into(), &output);
     };
     record("connector");
     recorder.finish_cell_recording(&cell);
@@ -228,7 +229,7 @@ async fn capture_only_request_metadata_preserves_late_bindings_and_restores_full
     recorder.attach_direct_call_to_output(
         &mut output,
         /*prepared*/ None,
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     let mut items = [exec_input("exec"), output];
     let history = items.clone();
@@ -324,7 +325,7 @@ fn large_direct_and_code_mode_metadata_survive_sampling_and_compaction() {
     recorder.attach_direct_call_to_output(
         &mut direct,
         Some((direct_call, recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     assert!(direct.executed_tool_call_metadata().is_none());
 
@@ -396,7 +397,7 @@ fn failed_compaction_preserves_observations_absent_from_trimmed_retries() {
     recorder.attach_direct_call_to_output(
         &mut direct,
         Some((direct_call, recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     assert!(direct.executed_tool_call_metadata().is_none());
     let mut history = vec![direct.clone()];
@@ -452,7 +453,7 @@ fn compaction_keeps_direct_outputs_in_code_mode_binding_validation() {
     recorder.attach_direct_call_to_output(
         &mut direct,
         Some((call.clone(), recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     let mut compact = vec![exec_input("exec"), exec_output("exec"), direct.clone()];
     recorder.attach_to_compaction_prompt(&mut compact);
@@ -475,7 +476,7 @@ fn direct_retained_metadata_budget_sheds_results_then_calls_across_refresh() {
     recorder.attach_direct_call_to_output(
         &mut first,
         Some((call.clone(), recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     let mut expected_first = output("first");
     expected_first.set_id(first.id().cloned());
@@ -511,7 +512,7 @@ fn direct_retained_metadata_budget_sheds_results_then_calls_across_refresh() {
     recorder.clone().attach_direct_call_to_output(
         &mut resource_only_output,
         Some((call.clone(), recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     expected_resource_only.set_id(resource_only_output.id().cloned());
     assert_eq!(resource_only_output, expected_resource_only);
@@ -536,7 +537,7 @@ fn direct_retained_metadata_budget_sheds_results_then_calls_across_refresh() {
     recorder.clone().attach_direct_call_to_output(
         &mut second,
         Some((call.clone(), recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     let mut expected_second = output("second");
     expected_second.set_id(second.id().cloned());
@@ -576,7 +577,7 @@ fn direct_retained_metadata_budget_sheds_results_then_calls_across_refresh() {
     recorder.attach_direct_call_to_output(
         &mut third,
         Some((call, recorder.reserve_direct_call().unwrap())),
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     assert!(third.executed_tool_call_metadata().is_none());
     assert_eq!(
@@ -670,7 +671,7 @@ async fn recorder_refreshes_without_changing_execution_features_or_claiming_miss
 
         let call = ToolCall {
             tool_name: codex_tools::ToolName::plain("test_tool"),
-            call_id: format!("call-{index}"),
+            call_id: format!("call-{index}").into(),
             payload: ToolPayload::Function {
                 arguments: r#"{"value":7}"#.to_string(),
             },
@@ -689,18 +690,14 @@ async fn recorder_refreshes_without_changing_execution_features_or_claiming_miss
                 calls.attach_direct_call_to_output(
                     &mut stale_output,
                     Some(stale),
-                    &session.item_id_generator,
+                    &session.context_ids,
                 );
                 assert!(stale_output.executed_tool_call_metadata().is_none());
             }
             prior_generation = calls.prepare_direct_call(&call, &ToolCallSource::Direct, &step);
         }
         let mut direct_output = output(&call.call_id);
-        calls.attach_direct_call_to_output(
-            &mut direct_output,
-            prepared,
-            &session.item_id_generator,
-        );
+        calls.attach_direct_call_to_output(&mut direct_output, prepared, &session.context_ids);
         assert_eq!(
             direct_output
                 .executed_tool_call_metadata()
@@ -722,7 +719,7 @@ async fn recorder_refreshes_without_changing_execution_features_or_claiming_miss
             let mut replay = output(&call.call_id);
             // Replay the same history item across the configuration refresh.
             replay.set_id(direct_output.id().cloned());
-            calls.attach_direct_call_to_output(&mut replay, prepared, &session.item_id_generator);
+            calls.attach_direct_call_to_output(&mut replay, prepared, &session.context_ids);
             assert_eq!(
                 replay.executed_tool_call_metadata(),
                 direct_output.executed_tool_call_metadata()
@@ -738,7 +735,7 @@ async fn recorder_refreshes_without_changing_execution_features_or_claiming_miss
             runtime_tool_call_id: "runtime-nested".to_string(),
         };
         let result = MetadataLookup(std::cell::Cell::new(0), json!({}), &calls);
-        calls.record_accepted_result(&source, "nested", &result);
+        calls.record_accepted_result(&source, &"nested".into(), &result);
         assert_eq!(result.0.get(), usize::from(enabled));
         nested.set_tool_result_metadata(ToolResultMetadata::new(&json!({})));
         if enabled {
@@ -772,7 +769,7 @@ fn executed_tool_call_recorder_bounds_pending_calls_and_preserves_overflow() {
         recorder.record_call(
             &ToolCall {
                 tool_name: codex_tools::ToolName::plain(crate::tools::code_mode::PUBLIC_TOOL_NAME),
-                call_id: format!("failed-wrapper-{index}"),
+                call_id: format!("failed-wrapper-{index}").into(),
                 payload: ToolPayload::Custom {
                     input: "".to_string(),
                 },
@@ -789,7 +786,7 @@ fn executed_tool_call_recorder_bounds_pending_calls_and_preserves_overflow() {
     for index in 0..MAX_PENDING_EXECUTED_TOOL_CALLS + 2 {
         recorder.record_nested_tool_call(
             cell_id.clone(),
-            format!("nested-{index}"),
+            format!("nested-{index}").into(),
             ExecutedToolCall::new("nested_tool".to_string(), json!({})),
             /*original_bytes*/ 2,
         );
@@ -896,7 +893,7 @@ fn tool_call_completeness_requires_finished_lossless_recording() {
         if scenario != "unfinished" {
             recorder.record_nested_tool_call(
                 cell_id.clone(),
-                "nested-call".to_string(),
+                "nested-call".into(),
                 ExecutedToolCall::new("nested_tool".to_string(), json!({})),
                 /*original_bytes*/ 2,
             );
@@ -1046,7 +1043,7 @@ fn tool_call_completeness_survives_waits_without_changing_deltas() {
                         tool_name: codex_tools::ToolName::plain(
                             crate::tools::code_mode::WAIT_TOOL_NAME,
                         ),
-                        call_id: call_id.to_string(),
+                        call_id: call_id.into(),
                         payload: ToolPayload::Function {
                             arguments: json!({"cell_id": cell_id.as_str()}).to_string(),
                         },
@@ -1085,7 +1082,7 @@ fn tool_call_completeness_survives_waits_without_changing_deltas() {
                 };
                 recorder.record_nested_tool_call(
                     cell_id.clone(),
-                    format!("nested-{index}"),
+                    format!("nested-{index}").into(),
                     call.clone(),
                     original_bytes,
                 );
@@ -1314,7 +1311,7 @@ fn completeness_rejects_direct_id_collision_and_late_calls() {
     recorder.record_call(
         &ToolCall {
             tool_name: codex_tools::ToolName::plain("direct_tool"),
-            call_id: "exec-collision".to_string(),
+            call_id: "exec-collision".into(),
             payload: ToolPayload::Function {
                 arguments: "{}".to_string(),
             },
@@ -1355,14 +1352,14 @@ fn large_wrapped_arguments_preserve_later_wait_completeness() {
     });
     let (call, original_bytes) = recorded_call(&ToolCall {
         tool_name: codex_tools::ToolName::plain("nested_tool"),
-        call_id: "nested".to_string(),
+        call_id: "nested".into(),
         payload: ToolPayload::Function {
             arguments: arguments.to_string(),
         },
         encrypted_function_args: None,
         native_call: None,
     });
-    recorder.record_nested_tool_call(cell.clone(), "nested".to_string(), call, original_bytes);
+    recorder.record_nested_tool_call(cell.clone(), "nested".into(), call, original_bytes);
     let mut initial = [exec_input("exec"), exec_output("exec")];
     recorder.attach_to_prompt(&mut initial, &mut HashMap::new());
     assert_eq!(
@@ -1417,7 +1414,7 @@ async fn nested_result_budget_reopens_after_binding_loss(invalidate_origin: bool
                 "content": [{"type": "text", "text": "x".repeat(text_bytes)}], "_meta": {"id": id}
             }),
         );
-        recorder.record_accepted_result(&source, id, &output);
+        recorder.record_accepted_result(&source, &id.into(), &output);
     };
     let bind = |id: &str, text_bytes: usize| {
         let cell = CellId::new(id.to_string());
@@ -1428,7 +1425,7 @@ async fn nested_result_budget_reopens_after_binding_loss(invalidate_origin: bool
         recorder.attach_direct_call_to_output(
             &mut output,
             /*prepared*/ None,
-            &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+            &thread_context_ids(),
         );
         [exec_input(id), output]
     };
@@ -1484,7 +1481,7 @@ async fn result_metadata_updates_the_exact_retained_call_and_preserves_large_ret
     for call_id in ["first", "second"] {
         recorder.record_nested_tool_call(
             cell_id.clone(),
-            call_id.to_string(),
+            call_id.into(),
             call.clone(),
             /*original_bytes*/ 2,
         );
@@ -1497,7 +1494,7 @@ async fn result_metadata_updates_the_exact_retained_call_and_preserves_large_ret
     recorder.attach_direct_call_to_output(
         &mut history[1],
         /*prepared*/ None,
-        &codex_protocol_test_support::uuid_v7_item_id_generator_for_test(),
+        &thread_context_ids(),
     );
     assert!(recorder.attach_pending_to_prompt(&mut history.clone(), &mut retry_cache));
 
@@ -1514,7 +1511,7 @@ async fn result_metadata_updates_the_exact_retained_call_and_preserves_large_ret
     let json = json!({"content": [{"type": "text", "text": "private".repeat(80 * 1024)}]});
     for id in ["unknown", "second"] {
         let output = captured_mcp_output(&capture, json.clone());
-        recorder.record_accepted_result(&source(cell_id.as_str()), id, &output);
+        recorder.record_accepted_result(&source(cell_id.as_str()), &id.into(), &output);
     }
     assert!(recorder.attach_pending_to_prompt(&mut history, &mut retry_cache));
     let bodies = capture.for_input(&history, &turn.auth_manager.as_ref().unwrap().auth_owner());
@@ -1570,7 +1567,7 @@ fn late_result_metadata_survives_truncated_arguments() {
         /*max_bytes*/ 8_192,
     );
     for (id, call, bytes) in [("first", &first, 9_000), ("second", &second, 9_001)] {
-        recorder.record_nested_tool_call(cell.clone(), id.to_string(), call.clone(), bytes);
+        recorder.record_nested_tool_call(cell.clone(), id.into(), call.clone(), bytes);
     }
     let history = [exec_input("exec"), exec_output("exec")];
     let mut retry_cache = HashMap::new();
@@ -1842,7 +1839,7 @@ fn late_truncated_metadata_is_not_attached_to_ambiguous_outputs() {
             "duplicate_id" => {
                 recorder.record_nested_tool_call(
                     cell.clone(),
-                    "nested".to_string(),
+                    "nested".into(),
                     call,
                     /*original_bytes*/ 9_000,
                 );
@@ -1929,17 +1926,12 @@ fn late_truncated_metadata_with_wrapped_arguments_rejects_ambiguous_outputs() {
     .to_string();
     let (wrapped_call, original_bytes) = recorded_call(&ToolCall {
         tool_name: codex_tools::ToolName::plain("other"),
-        call_id: "other".to_string(),
+        call_id: "other".into(),
         payload: ToolPayload::Function { arguments },
         encrypted_function_args: None,
         native_call: None,
     });
-    recorder.record_nested_tool_call(
-        cell.clone(),
-        "other".to_string(),
-        wrapped_call,
-        original_bytes,
-    );
+    recorder.record_nested_tool_call(cell.clone(), "other".into(), wrapped_call, original_bytes);
     let history = [exec_input("exec"), exec_output("exec")];
     let mut retry_cache = HashMap::new();
     let mut initial = history.clone();
@@ -2038,7 +2030,7 @@ fn finished_cells_without_more_waits_do_not_block_new_calls() {
         recorder.start_cell(&cell, cell.as_str());
         recorder.record_nested_tool_call(
             cell.clone(),
-            format!("nested-{index}"),
+            format!("nested-{index}").into(),
             call.clone(),
             /*original_bytes*/ 2,
         );
@@ -2052,7 +2044,7 @@ fn finished_cells_without_more_waits_do_not_block_new_calls() {
     recorder.start_cell(&fresh, "fresh-output");
     recorder.record_nested_tool_call(
         fresh.clone(),
-        "fresh-call".to_string(),
+        "fresh-call".into(),
         call.clone(),
         /*original_bytes*/ 2,
     );

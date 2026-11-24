@@ -319,6 +319,65 @@ async fn guardian_session_inherits_parent_http_fallback(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_guardian_does_not_inherit_actor_inline_catalog_with_same_provider_info()
+-> Result<()> {
+    skip_if_no_network!(Ok(()));
+    const MODEL: &str = "gpt-5.6-luna";
+    let server = wiremock::MockServer::start().await;
+    let mut actor_model = codex_models_manager::model_info::model_info_from_slug(MODEL);
+    actor_model.context_window = Some(11_000);
+    let mut guardian_model = actor_model.clone();
+    guardian_model.context_window = Some(73_000);
+    let catalog = mount_models_once(
+        &server,
+        ModelsResponse {
+            models: vec![guardian_model],
+        },
+    )
+    .await;
+    let url = format!("{}/v1/models", server.uri());
+    let test = test_codex()
+        .with_model(MODEL)
+        .with_config(move |config| {
+            config
+                .features
+                .enable(Feature::ApiKeyModelDiscovery)
+                .expect("enable discovery");
+            config.model_provider.model_catalog_url = Some(url.into());
+            config.model_catalog = Some(ModelsResponse {
+                models: vec![actor_model],
+            });
+            let info = config.model_provider.clone();
+            config.guardian_model_provider =
+                Some(Arc::new(codex_core::config::GuardianInferenceProvider {
+                    id: "host-guardian".to_owned(),
+                    info,
+                }));
+        })
+        .build_with_auto_env(&server)
+        .await?;
+    let guardian = test
+        .codex
+        .thread_extension_data()
+        .get::<codex_core::GuardianInferenceContext>()
+        .context("host Guardian route installed at thread start")?;
+    guardian
+        .models_manager
+        .ensure_initialized(guardian.http_client_factory.clone())
+        .await;
+    let model = guardian
+        .models_manager
+        .get_model_info(MODEL, &Default::default())
+        .await;
+    assert_eq!(
+        (model.origin, model.context_window, catalog.requests().len()),
+        (ModelOrigin::Provider, Some(73_000), 1),
+        "Guardian should use the provider catalog even when it shares the actor endpoint",
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[test_case(ModelOrigin::Bundled, "gateway-main"; "bundled_reviewer_falls_back")]
 #[test_case(ModelOrigin::Provider, "codex-auto-review"; "advertised_reviewer")]
 #[test_case(ModelOrigin::ExplicitConfig, "codex-auto-review"; "configured_reviewer")]
@@ -640,7 +699,7 @@ async fn guardian_review_recovers_after_compaction(
         .await;
     }
     let command = json!({
-        "cmd": "true",
+        "cmd": "printf POST_COMPACTION_APPROVED",
         "sandbox_permissions": "require_escalated",
         "justification": "Read the internal samples the user authorized.",
     });
@@ -723,6 +782,20 @@ async fn guardian_review_recovers_after_compaction(
         })
         .collect::<Vec<_>>();
     assert_eq!(guardian_requests.len(), 3);
+    let verdict_format = json!({
+        "type": "json_schema",
+        "name": "codex_output_schema",
+        "strict": false,
+        "schema": codex_guardian_reviewer::guardian_output_schema(),
+    });
+    assert_eq!(
+        guardian_requests
+            .iter()
+            .map(|request| request.body_json()["text"]["format"].clone())
+            .collect::<Vec<_>>(),
+        vec![verdict_format.clone(); guardian_requests.len()],
+        "reviews before and after compaction must retain the verdict format"
+    );
     assert_eq!(
         guardian_requests[0].body_json()["client_metadata"]["thread_id"]
             == guardian_requests[1].body_json()["client_metadata"]["thread_id"],
@@ -744,6 +817,14 @@ async fn guardian_review_recovers_after_compaction(
     assert_eq!(
         compact_requests.len(),
         usize::from(!with_parent_checkpoint) + compaction_errors.len(),
+    );
+    assert_eq!(
+        compact_requests
+            .iter()
+            .map(|request| request.body_json()["text"]["format"].clone())
+            .collect::<Vec<_>>(),
+        vec![verdict_format; compact_requests.len()],
+        "compaction and retries must preserve the verdict format"
     );
     if let Some(compact_request) = compact_requests.first() {
         assert!(
@@ -822,6 +903,16 @@ async fn guardian_review_recovers_after_compaction(
             }
         }
     }
+
+    assert!(
+        requests
+            .last()
+            .expect("parent continuation after the reviews")
+            .function_call_output("exec-second")
+            .to_string()
+            .contains("POST_COMPACTION_APPROVED"),
+        "the verdict after compaction must approve execution"
+    );
 
     Ok(())
 }

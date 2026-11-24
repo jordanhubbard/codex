@@ -15,7 +15,6 @@ use resume_permit::ResumePermit;
 mod thread_resume_account;
 
 use super::persisted_resume_settings::PersistedResumeSettings;
-use super::persisted_resume_settings::latest_owned_thread_settings;
 use super::persisted_resume_settings::latest_persisted_model_settings;
 use super::thread_enrichment::enrich_loaded_threads;
 use super::thread_fork_goal::inherit_thread_goal_snapshot;
@@ -1270,6 +1269,7 @@ impl ThreadRequestProcessor {
     fn listener_task_context(&self) -> ListenerTaskContext {
         ListenerTaskContext {
             thread_manager: Arc::clone(&self.thread_manager),
+            thread_store: Arc::clone(&self.thread_store),
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
@@ -1401,16 +1401,7 @@ impl ThreadRequestProcessor {
             personality,
         );
         typesafe_overrides.ephemeral = ephemeral;
-        let listener_task_context = ListenerTaskContext {
-            thread_manager: Arc::clone(&self.thread_manager),
-            thread_state_manager: self.thread_state_manager.clone(),
-            outgoing: Arc::clone(&self.outgoing),
-            pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
-            thread_watch_manager: self.thread_watch_manager.clone(),
-            codex_home: self.config.codex_home.to_path_buf(),
-            skills_watcher: Arc::clone(&self.skills_watcher),
-            turn_cost_worker: self.turn_cost_worker.clone(),
-        };
+        let listener_task_context = self.listener_task_context();
         let request_trace = request_context.request_trace();
         let config_manager = self.config_manager.clone();
         let thread_store = Arc::clone(&self.thread_store);
@@ -1654,6 +1645,9 @@ impl ThreadRequestProcessor {
                 .then_some(ThreadHistoryMode::Paginated)
         });
         let mut thread_extension_init = ExtensionDataInit::new();
+        if experimental_raw_events {
+            thread_extension_init.insert(codex_core::UsageAttributionPolicy::Retain);
+        }
         if !selected_capability_roots.is_empty() {
             thread_extension_init.insert(selected_capability_roots);
         }
@@ -2527,9 +2521,14 @@ impl ThreadRequestProcessor {
     ) -> Result<ThreadRevertResponse, JSONRPCErrorError> {
         let ThreadRevertRuntimeSnapshot {
             mut config,
-            settings,
+            mut settings,
             client_mcp_extensions,
         } = runtime_snapshot;
+        // Resolve the saved reviewer request against the replacement's Guardian policy at startup.
+        config.requested_approvals_reviewer = settings
+            .requested_approvals_reviewer
+            .or(settings.approvals_reviewer);
+        settings.approvals_reviewer = None;
         if let Some(collaboration_mode) = settings.collaboration_mode.as_ref() {
             config.model = Some(collaboration_mode.model().to_string());
         }
@@ -4320,11 +4319,7 @@ impl ThreadRequestProcessor {
         permit.finish_probe();
         // Copied or referenced history can contain another thread's settings. Only snapshots
         // explicitly owned by this thread can restore its cwd and workspace folders.
-        let history_settings = if let InitialHistory::Resumed(resumed) = &thread_history {
-            latest_owned_thread_settings(&resumed.history, resumed.conversation_id)
-        } else {
-            None
-        };
+        let history_settings = thread_history.resumed_thread_settings();
         let history_cwd = history_settings
             .map(|settings| settings.cwd.to_path_buf())
             .or_else(|| thread_history.session_cwd());
@@ -5904,7 +5899,11 @@ impl ThreadRequestProcessor {
         };
         let new_thread = if let Some(prepared_fork) = prepared_fork {
             self.thread_manager
-                .fork_prepared_thread(fork_options, prepared_fork)
+                .fork_prepared_thread(
+                    fork_options,
+                    prepared_fork,
+                    codex_thread_store::InheritedHistoryVisibility::Full,
+                )
                 .await
         } else {
             self.thread_manager
@@ -6088,8 +6087,12 @@ impl ThreadRequestProcessor {
         let active_permission_profile =
             thread_response_active_permission_profile(config_snapshot.active_permission_profile);
         let thread_originator = config_snapshot.originator.clone();
+        let turns = std::mem::take(&mut thread.turns);
         let response = ThreadForkResponse {
-            thread: thread.clone(),
+            thread: Thread {
+                turns,
+                ..thread.clone()
+            },
             disabled_plugin_ids: config_snapshot.disabled_plugin_ids,
             model: config_snapshot.model.clone(),
             model_provider: session_configured.model_provider_id,
@@ -7065,32 +7068,6 @@ fn summary_from_state_db_metadata(
         source,
         git_info,
     }
-}
-
-#[cfg(test)]
-fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummary {
-    summary_from_state_db_metadata(
-        metadata.id,
-        metadata.rollout_path.clone(),
-        metadata.first_user_message.clone(),
-        metadata.preview.clone(),
-        metadata
-            .created_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
-        metadata
-            .updated_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
-        metadata.model_provider.clone(),
-        metadata.cwd.clone(),
-        metadata.cli_version.clone(),
-        metadata.source.clone(),
-        metadata.thread_source.clone(),
-        metadata.agent_nickname.clone(),
-        metadata.agent_role.clone(),
-        metadata.git_sha.clone(),
-        metadata.git_branch.clone(),
-        metadata.git_origin_url.clone().map(String::from),
-    )
 }
 
 fn preview_from_rollout_items(items: &[RolloutItem]) -> String {

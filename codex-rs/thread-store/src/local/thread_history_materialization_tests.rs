@@ -815,6 +815,7 @@ async fn paginated_realtime_items_materialize_separately_in_rollout_order() {
             multi_agent_version: None,
             history_mode: ThreadHistoryMode::Legacy,
             history_base: None,
+            inherited_history_visibility: Default::default(),
             subagent_history_start_ordinal: None,
             initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
             runtime_workspace_roots: None,
@@ -2623,10 +2624,12 @@ async fn paused_projection_releases_writer_and_retains_progress_when_stopped() {
         )
         .expect("read batch");
         let consumer_store = Arc::clone(&store);
+        let consumer_path = rollout_path.clone();
         let consumer = tokio::spawn(async move {
             super::pipeline::apply_batches(
                 &consumer_store,
                 thread_id,
+                consumer_path.as_path(),
                 before.0 as u64,
                 /*initial_ordinal*/ 0,
                 receiver,
@@ -3167,6 +3170,7 @@ async fn create_paginated_subagent_thread(
             multi_agent_version: None,
             history_mode: ThreadHistoryMode::Paginated,
             history_base,
+            inherited_history_visibility: Default::default(),
             subagent_history_start_ordinal,
             initial_window_id: codex_protocol::ContextWindowId::new_uuid_v7(),
             runtime_workspace_roots: None,

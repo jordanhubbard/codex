@@ -492,7 +492,8 @@ web_search = true
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
-            ..Default::default()
+            experimental_request_user_input: None,
+            update_plan: None,
         })
     );
 }
@@ -511,7 +512,8 @@ web_search = false
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
-            ..Default::default()
+            experimental_request_user_input: None,
+            update_plan: None,
         })
     );
 }
@@ -528,8 +530,9 @@ fn tools_experimental_request_user_input_defaults_to_enabled() {
     assert_eq!(
         cfg.tools,
         Some(ToolsToml {
+            web_search: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: true }),
-            ..Default::default()
+            update_plan: None,
         })
     );
 }
@@ -547,8 +550,9 @@ enabled = false
     assert_eq!(
         cfg.tools,
         Some(ToolsToml {
+            web_search: None,
             experimental_request_user_input: Some(ExperimentalRequestUserInput { enabled: false }),
-            ..Default::default()
+            update_plan: None,
         })
     );
 }
@@ -564,7 +568,6 @@ async fn load_config_resolves_experimental_request_user_input_enabled() -> std::
                     enabled: false,
                 }),
                 update_plan: None,
-                ..Default::default()
             }),
             ..ConfigToml::default()
         },
@@ -7062,11 +7065,18 @@ async fn feedback_enabled_defaults_to_true() -> std::io::Result<()> {
 }
 
 #[test]
-fn web_search_mode_defaults_to_none_if_unset() {
+fn web_search_mode_defaults_to_cached_if_unset() {
     let cfg = ConfigToml::default();
     let features = Features::with_defaults();
 
-    assert_eq!(resolve_web_search_mode(&cfg, &features), None);
+    assert_eq!(
+        resolve_web_search_mode(
+            &cfg,
+            &features,
+            &Constrained::allow_any(WebSearchMode::Cached),
+        ),
+        WebSearchMode::Cached,
+    );
 }
 
 #[test]
@@ -7079,8 +7089,12 @@ fn web_search_mode_prefers_config_over_legacy_flags() {
     features.enable(Feature::WebSearchCached);
 
     assert_eq!(
-        resolve_web_search_mode(&cfg, &features),
-        Some(WebSearchMode::Live)
+        resolve_web_search_mode(
+            &cfg,
+            &features,
+            &Constrained::allow_any(WebSearchMode::Cached),
+        ),
+        WebSearchMode::Live
     );
 }
 
@@ -7094,8 +7108,12 @@ fn web_search_mode_disabled_overrides_legacy_request() {
     features.enable(Feature::WebSearchRequest);
 
     assert_eq!(
-        resolve_web_search_mode(&cfg, &features),
-        Some(WebSearchMode::Disabled)
+        resolve_web_search_mode(
+            &cfg,
+            &features,
+            &Constrained::allow_any(WebSearchMode::Cached),
+        ),
+        WebSearchMode::Disabled
     );
 }
 
@@ -7104,6 +7122,7 @@ fn web_search_mode_for_turn_preserves_indexed_for_disabled_permissions() {
     let web_search_mode = Constrained::allow_any(WebSearchMode::Indexed);
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7117,6 +7136,7 @@ fn web_search_mode_for_turn_uses_preference_for_read_only() {
     let permission_profile = PermissionProfile::read_only();
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &permission_profile,
         ProviderCapabilities::default(),
     );
@@ -7129,6 +7149,7 @@ fn web_search_mode_for_turn_prefers_live_for_disabled_permissions() {
     let web_search_mode = Constrained::allow_any(WebSearchMode::Cached);
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7142,6 +7163,7 @@ fn web_search_mode_for_turn_falls_back_when_provider_disallows_external_web_acce
         let web_search_mode = Constrained::allow_any(preferred);
         let mode = resolve_web_search_mode_for_turn(
             &web_search_mode,
+            /*web_search_mode_was_explicit*/ true,
             &PermissionProfile::Disabled,
             ProviderCapabilities {
                 external_web_access: false,
@@ -7176,6 +7198,7 @@ fn web_search_mode_for_turn_disables_when_external_access_and_cached_are_disallo
         })?;
         let mode = resolve_web_search_mode_for_turn(
             &web_search_mode,
+            /*web_search_mode_was_explicit*/ true,
             &PermissionProfile::Disabled,
             ProviderCapabilities {
                 external_web_access: false,
@@ -7193,6 +7216,7 @@ fn web_search_mode_for_turn_respects_disabled_for_disabled_permissions() {
     let web_search_mode = Constrained::allow_any(WebSearchMode::Disabled);
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7217,6 +7241,7 @@ fn web_search_mode_for_turn_falls_back_when_live_is_disallowed() -> anyhow::Resu
     })?;
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -7246,6 +7271,7 @@ fn web_search_mode_for_turn_does_not_implicitly_select_indexed() -> anyhow::Resu
     })?;
     let mode = resolve_web_search_mode_for_turn(
         &web_search_mode,
+        /*web_search_mode_was_explicit*/ true,
         &PermissionProfile::Disabled,
         ProviderCapabilities::default(),
     );
@@ -9189,6 +9215,55 @@ max_section_entry_tokens = 1
 }
 
 #[tokio::test]
+async fn transcript_audio_elastic_budget_loads_for_both_reviewers() {
+    use codex_guardian_context::ElasticSection;
+    use codex_guardian_context::ElasticSectionLimits;
+
+    const AUDIO_RESERVATION_TOKENS: usize = 2_000;
+    const AUDIO_ENTRY_TOKENS: usize = 500;
+    const AUDIO_MAXIMUM_TOKENS: usize = 4_000;
+    let mut policy = core_test_support::guardian::elastic_budget_config();
+    let messages = policy.sections[&ElasticSection::TranscriptMessages];
+    policy.sections.insert(
+        ElasticSection::TranscriptMessages,
+        ElasticSectionLimits::new(
+            messages.min_total_section_tokens() - AUDIO_RESERVATION_TOKENS,
+            messages.max_section_entry_tokens(),
+        )
+        .unwrap(),
+    );
+    policy.sections.insert(
+        ElasticSection::TranscriptAudio,
+        ElasticSectionLimits::new(AUDIO_RESERVATION_TOKENS, AUDIO_ENTRY_TOKENS)
+            .unwrap()
+            .with_max_total_section_tokens(AUDIO_MAXIMUM_TOKENS)
+            .unwrap(),
+    );
+    let sections = toml::Value::try_from(&policy.sections).unwrap();
+    let home = TempDir::new().unwrap();
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str(&format!(
+            "[features.guardianv2]\nsync_elastic_budgeting = true\nasync_elastic_budgeting = true\nsync_elastic_sections = {sections}\nasync_elastic_sections = {sections}"
+        ))
+        .unwrap(),
+        ConfigOverrides {
+            cwd: Some(home.path().to_path_buf()),
+            ..Default::default()
+        },
+        home.abs(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (
+            config.guardian_sync_elastic_budget,
+            config.guardian_async_elastic_budget
+        ),
+        (Some(policy.clone()), Some(policy)),
+    );
+}
+
+#[tokio::test]
 async fn async_elastic_opt_in_preserves_fixed_capture() {
     let mut config = super::test_config().await;
     config.guardian_async_elastic_budget =
@@ -11028,6 +11103,7 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
     let fixture = create_test_fixture()?;
 
     let requirements_toml = codex_config::ConfigRequirementsToml {
+        gateway: None,
         config_server: None,
         model_provider: None,
         model_providers: None,
@@ -12302,6 +12378,7 @@ async fn requirements_web_search_mode_overrides_danger_full_access_default() -> 
     assert_eq!(
         resolve_web_search_mode_for_turn(
             &config.web_search_mode,
+            config.web_search_mode_was_explicit,
             &config.permissions.effective_permission_profile(),
             ProviderCapabilities::default(),
         ),
@@ -13112,9 +13189,10 @@ expose_spawn_agent_model_overrides = true
 }
 
 #[test]
-fn multi_agent_v2_disabled_native_tools_omit_default_roles() {
+fn multi_agent_v2_disabled_native_tools_keep_only_concurrency() {
     let mut config = resolve_multi_agent_v2_config(&ConfigToml::default());
     config.disable_native_tools = true;
+    config.max_concurrent_threads_per_session = 17;
     let mut messages = ResolvedModelMessages::bundled().multi_agent();
     for catalog_override in [false, true] {
         if catalog_override {
@@ -13124,7 +13202,13 @@ fn multi_agent_v2_disabled_native_tools_omit_default_roles() {
         let usage_hints = resolve_usage_hints(
             &config, messages, /*omit_update_plan_instructions*/ false,
         );
-        assert_eq!((usage_hints.root, usage_hints.subagent), (None, None));
+        let expected = Some(
+            crate::context::MultiAgentRoleInstructions::concurrency_only(
+                /*max_concurrency*/ 17,
+            ),
+        );
+        assert_eq!(usage_hints.root, expected);
+        assert_eq!(usage_hints.subagent, expected);
     }
 }
 

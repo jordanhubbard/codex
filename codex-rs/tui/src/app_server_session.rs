@@ -45,6 +45,7 @@ use crate::app_event::PermissionProfileSelection;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::FeedbackAudience;
 use crate::dynamic_tools_mcp::DynamicToolMcpServer;
+use crate::dynamic_tools_mcp::DynamicToolMcpServerOptions;
 use crate::dynamic_tools_mcp::ThreadToolTransport;
 use crate::legacy_core::config::Config;
 use crate::local_settings::LocalSettings;
@@ -775,6 +776,7 @@ impl AppServerSession {
     pub(crate) async fn start_dynamic_tool_mcp(
         &mut self,
         config: Config,
+        workspace_enabled: bool,
         app_event_tx: AppEventSender,
         status_updates: tokio::sync::broadcast::Sender<ThreadStatusChangedNotification>,
     ) -> std::io::Result<()> {
@@ -840,15 +842,22 @@ impl AppServerSession {
             });
         thread_start_params.daybreak_enabled =
             daybreak_launch_override.then_some(config.daybreak_enabled);
+        let sidebar_backend = (workspace_enabled
+            && !self.uses_remote_workspace()
+            && self.supports_document_previews())
+        .then_some(self.backend_id());
         let server = Arc::new(
             DynamicToolMcpServer::start(
                 self.request_handle(),
                 thread_start_params,
-                Some(config.cwd.to_path_buf()),
                 config.features.get().clone(),
                 app_event_tx,
                 status_updates,
-                worktrees,
+                DynamicToolMcpServerOptions {
+                    handoff_project: Some(config.cwd.to_path_buf()),
+                    worktrees,
+                    sidebar_backend,
+                },
             )
             .await?,
         );
@@ -892,6 +901,18 @@ impl AppServerSession {
 
     pub(crate) fn uses_embedded_app_server(&self) -> bool {
         matches!(&self.request_handle, AppServerRequestHandle::InProcess(_))
+    }
+
+    pub(crate) async fn model_preview_permissions(
+        &self,
+        source: ThreadId,
+    ) -> Result<Option<codex_app_server_client::ThreadPermissions>> {
+        match &self.connection_owner {
+            Some(AppServerClient::InProcess(client)) => {
+                Ok(Some(client.thread_permissions(source).await?))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Carry capabilities that may exist only in memory when the optional cache is unwritable.
@@ -1208,6 +1229,7 @@ impl AppServerSession {
             remote_cwd_override.or(self.remote_cwd_override.as_deref()),
             session_start_source,
         );
+        apply_prewarm_reasoning_summary(&mut params, &session_config, &self.request_handle);
         if self.thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
             params.model_provider = self
                 .model_provider_override
@@ -2443,6 +2465,7 @@ pub(crate) async fn start_thread_with_request_handle(
         launch_choices.approvals_reviewer,
         &launch_choices.approval_policy,
     );
+    apply_prewarm_reasoning_summary(&mut params, &config, &request_handle);
     if thread_params_mode.settings_owner() == ThreadSettingsOwner::Client {
         thread_tool_transport
             .check_namespace(&request_handle, &config.cwd)
@@ -2859,6 +2882,34 @@ pub(crate) fn thread_start_params_from_config(
     )
 }
 
+pub(crate) fn reasoning_summary_from_config(
+    config: &Config,
+) -> Option<codex_protocol::config_types::ReasoningSummary> {
+    config.model_reasoning_summary.or_else(|| {
+        config
+            .model_providers
+            .get(&config.model_provider_id)
+            .is_some_and(codex_model_provider_info::ModelProviderInfo::is_openai)
+            .then_some(codex_protocol::config_types::ReasoningSummary::Auto)
+    })
+}
+
+fn apply_prewarm_reasoning_summary(
+    params: &mut ThreadStartParams,
+    config: &Config,
+    request_handle: &AppServerRequestHandle,
+) {
+    if matches!(request_handle, AppServerRequestHandle::InProcess(_))
+        && config.model_reasoning_summary.is_none()
+        && let Some(summary) = reasoning_summary_from_config(config)
+    {
+        params.config.get_or_insert_default().insert(
+            "model_reasoning_summary".to_string(),
+            serde_json::json!(summary),
+        );
+    }
+}
+
 fn thread_start_params_with_reviewer(
     config: &Config,
     thread_params_mode: ThreadParamsMode,
@@ -2880,6 +2931,7 @@ fn thread_start_params_with_reviewer(
             )
         })
         .flatten();
+    let overrides = config_request_overrides_from_config(config, thread_params_mode);
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: provider_selection::explicit_provider(config),
@@ -2901,7 +2953,7 @@ fn thread_start_params_with_reviewer(
         },
         sandbox,
         permissions,
-        config: config_request_overrides_from_config(config, thread_params_mode),
+        config: overrides,
         ephemeral: Some(config.ephemeral),
         history_mode: (!config.ephemeral).then_some(ThreadHistoryMode::Paginated),
         session_start_source,
