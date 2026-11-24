@@ -59,6 +59,18 @@ pub struct UnixStream {
 }
 
 impl UnixStream {
+    /// Authenticates the connected Unix peer before granting local-only RPCs.
+    #[cfg(unix)]
+    pub fn ensure_same_user_peer(&self) -> IoResult<()> {
+        if self.inner.peer_cred()?.uid() != unsafe { libc::geteuid() } {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "socket peer belongs to a different user",
+            ));
+        }
+        Ok(())
+    }
+
     /// Requires the Windows peer to belong to the current user, with neither
     /// process elevated. Call before sending any application data.
     #[cfg(windows)]

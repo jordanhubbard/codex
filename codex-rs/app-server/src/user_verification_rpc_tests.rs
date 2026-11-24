@@ -88,7 +88,11 @@ async fn user_verification_rpc_disconnect_cancels_worker_and_releases_slot() -> 
 
 #[tokio::test]
 async fn user_verification_rpc_network_peers_cannot_use_server_keys() -> Result<()> {
-    for origin in [ConnectionOrigin::WebSocket, ConnectionOrigin::RemoteControl] {
+    for origin in [
+        ConnectionOrigin::LocalSocket,
+        ConnectionOrigin::WebSocket,
+        ConnectionOrigin::RemoteControl,
+    ] {
         let mut h = Harness::new(origin, || true).await?;
         h.initialize("codex-tui", /*opt_in*/ true).await;
         for method in [
@@ -111,6 +115,33 @@ async fn user_verification_rpc_network_peers_cannot_use_server_keys() -> Result<
             );
         }
         assert_eq!(h.provider.calls.load(Ordering::SeqCst), 0);
+        h.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn tui_mcp_handoff_network_origins_are_rejected_before_thread_lookup() -> Result<()> {
+    for origin in [ConnectionOrigin::WebSocket, ConnectionOrigin::RemoteControl] {
+        let mut h = Harness::new(origin, || true).await?;
+        h.initialize("codex-tui", true).await;
+        h.send(
+            1,
+            "thread/tuiMcp/rebind",
+            json!({
+                "threadId": "00000000-0000-0000-0000-000000000000",
+                "cwd": "/not-a-project", "url": "http://127.0.0.1:54321/mcp",
+                "bearerToken": "550e8400-e29b-41d4-a716-446655440000"
+            }),
+        )
+        .await;
+        let OutgoingMessage::Error(error) = h.response().await else {
+            panic!("network-origin handoff must fail")
+        };
+        assert_eq!(
+            error.error.message,
+            "TUI MCP handoff could not verify the same local project and endpoint"
+        );
         h.shutdown().await;
     }
     Ok(())

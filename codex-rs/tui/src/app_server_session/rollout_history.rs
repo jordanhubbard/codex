@@ -335,6 +335,33 @@ impl AppServerSession {
         mut response: ThreadResumeResponse,
         scope: HistoryHydrationScope<'_>,
     ) -> Result<AppServerStartedThread> {
+        if let Some(params) = self
+            .dynamic_tool_mcp
+            .as_ref()
+            .and_then(|server| server.handoff_params(thread_id, response.cwd.as_str()))
+        {
+            // This server is constructed only for an embedded/local-daemon TUI.
+            // A loaded resume ignores config overrides; use a scoped hot update
+            // rather than resuming again or writing the global MCP configuration.
+            let request_id = self.next_request_id();
+            let rebound = self
+                .request_handle
+                .request_typed::<codex_app_server_protocol::ThreadTuiMcpRebindResponse>(
+                    ClientRequest::ThreadTuiMcpRebind { request_id, params },
+                )
+                .await;
+            if let Err(error) = rebound {
+                self.unconfirmed_task_tool_handoffs.insert(thread_id);
+                // Older daemons can continue coding, but do not claim transport
+                // continuity or automatically replay a request after any failure.
+                tracing::warn!(
+                    unsupported = super::is_method_not_found(&error),
+                    "TUI task-tools handoff was not confirmed; management tools may remain unavailable"
+                );
+            } else {
+                self.unconfirmed_task_tool_handoffs.remove(&thread_id);
+            }
+        }
         if let Some(subscribed) = &mut self.attachment_subscribed {
             *subscribed = true;
         }

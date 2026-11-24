@@ -695,6 +695,50 @@ impl ConfigLayerStack {
         self.with_session_section("plugins", plugins)
     }
 
+    /// Replaces only the transport of an existing session-owned TUI tools server.
+    /// The caller validates endpoint ownership and applies managed MCP requirements.
+    /// Keeping this in the session layer prevents a later host reload from restoring
+    /// the retired viewer's endpoint. No user or project file is written.
+    pub fn with_session_tui_mcp_transport(
+        self,
+        expected_url: &str,
+        url: &str,
+        authorization: &str,
+    ) -> std::io::Result<Self> {
+        let invalid = || std::io::Error::other("TUI MCP session transport does not match");
+        let mut servers = TomlValue::Table(Default::default());
+        for layer in self
+            .layers_low_to_high()
+            .filter(|layer| layer.name == ConfigLayerSource::SessionFlags && !layer.is_disabled())
+        {
+            if let Some(value) = layer.config.get("mcp_servers") {
+                merge_toml_values(&mut servers, value);
+            }
+        }
+        let server = servers
+            .get_mut("codex_tui")
+            .and_then(TomlValue::as_table_mut)
+            .ok_or_else(invalid)?;
+        if server.get("url").and_then(TomlValue::as_str) != Some(expected_url)
+            || server.contains_key("command")
+            || server.contains_key("bearer_token_env_var")
+            || server.contains_key("env_http_headers")
+            || server.contains_key("http_headers_helper")
+        {
+            return Err(invalid());
+        }
+        let headers = server
+            .get_mut("http_headers")
+            .and_then(TomlValue::as_table_mut)
+            .ok_or_else(invalid)?;
+        if headers.len() != 1 || !headers.contains_key("Authorization") {
+            return Err(invalid());
+        }
+        headers.insert("Authorization".into(), authorization.into());
+        server.insert("url".into(), url.into());
+        self.with_session_section("mcp_servers", servers)
+    }
+
     /// Replaces the session's connector settings. An empty table restores inheritance.
     pub fn with_session_apps(self, apps: TomlValue) -> std::io::Result<Self> {
         // Validate the override but keep its original TOML so omitted fields inherit.

@@ -9,6 +9,64 @@ use codex_exec_server::LOCAL_FS;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn tui_mcp_handoff_rejects_stale_publication_and_survives_mcp_refresh() {
+    let (session, _) = make_session_and_context().await;
+    let original = session.get_config().await;
+    let auth = "Bearer 550e8400-e29b-41d4-a716-446655440000";
+    let old_url = "http://127.0.0.1:54321/mcp";
+    let new_url = "http://127.0.0.1:54322/mcp";
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(original.codex_home.to_path_buf())
+        .fallback_cwd(Some(original.cwd.to_path_buf()))
+        .cli_overrides(vec![("mcp_servers.codex_tui".into(), toml::from_str(&format!(
+            "url = '{old_url}'\ndefault_tools_approval_mode = 'prompt'\n[http_headers]\nAuthorization = '{auth}'\n"
+        )).unwrap())])
+        .build().await.unwrap();
+    let before = Arc::new(config);
+    session
+        .state
+        .lock()
+        .await
+        .session_configuration
+        .original_config_do_not_use = Arc::clone(&before);
+    assert_eq!(
+        session
+            .rebind_tui_mcp_transport(Arc::clone(&before), old_url, new_url, auth)
+            .await
+            .unwrap(),
+        ConfigRefreshOutcome::Published
+    );
+    let published = session.get_config().await;
+    assert_eq!(
+        session
+            .rebind_tui_mcp_transport(before, old_url, "http://127.0.0.1:54323/mcp", auth)
+            .await
+            .unwrap(),
+        ConfigRefreshOutcome::Stale
+    );
+    assert!(Arc::ptr_eq(&published, &session.get_config().await));
+    assert_eq!(
+        session
+            .refresh_mcp_config(Arc::clone(&published), published.as_ref().clone())
+            .await,
+        ConfigRefreshOutcome::Published
+    );
+    let refreshed = session.get_config().await;
+    assert_eq!(
+        refreshed.config_layer_stack.effective_config()["mcp_servers"]["codex_tui"]["url"].as_str(),
+        Some(new_url)
+    );
+    assert_eq!(
+        refreshed.mcp_servers.get()["codex_tui"],
+        published.mcp_servers.get()["codex_tui"]
+    );
+    assert_eq!(
+        refreshed.permissions.approval_policy.value(),
+        published.permissions.approval_policy.value()
+    );
+}
+
+#[tokio::test]
 async fn guardian_refresh_updates_idle_thread_while_another_thread_is_busy() -> anyhow::Result<()> {
     struct TestPolicyLoader(AbsolutePathBuf);
     impl crate::GuardianPolicyLoader for TestPolicyLoader {

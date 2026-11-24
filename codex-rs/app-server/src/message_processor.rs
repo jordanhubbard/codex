@@ -1929,6 +1929,9 @@ impl MessageProcessor {
             ClientRequest::McpServerRefresh { params, .. } => {
                 self.mcp_processor.mcp_server_refresh(params).await
             }
+            ClientRequest::ThreadTuiMcpRebind { params, .. } => {
+                Box::pin(self.mcp_processor.tui_mcp_rebind(session.origin, params)).await
+            }
             ClientRequest::McpServerStatusList { params, .. } => {
                 self.mcp_processor
                     .mcp_server_status_list(&request_id, params)

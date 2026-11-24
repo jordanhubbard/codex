@@ -2,6 +2,7 @@
 
 use crate::app_event_sender::AppEventSender;
 use crate::dynamic_tools;
+use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
@@ -11,6 +12,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::middleware;
 use axum::middleware::Next;
 use axum::response::Response;
+use axum::routing::get;
 use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_protocol::DynamicToolCallOutputContentItem;
 use codex_app_server_protocol::DynamicToolCallParams;
@@ -103,9 +105,34 @@ pub(crate) struct DynamicToolMcpServer {
     connection: ToolConnection,
     config: Value,
     task: JoinHandle<()>,
+    #[cfg(test)]
+    calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl DynamicToolMcpServer {
+    #[cfg(test)]
+    pub(crate) fn call_count(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn handoff_params(
+        &self,
+        thread_id: codex_protocol::ThreadId,
+        cwd: &str,
+    ) -> Option<codex_app_server_protocol::ThreadTuiMcpRebindParams> {
+        let authorization = self
+            .config
+            .get("http_headers")?
+            .get("Authorization")?
+            .as_str()?;
+        Some(codex_app_server_protocol::ThreadTuiMcpRebindParams {
+            thread_id: thread_id.to_string(),
+            cwd: cwd.to_owned(),
+            url: self.config.get("url")?.as_str()?.to_owned(),
+            bearer_token: authorization.strip_prefix("Bearer ")?.to_owned().into(),
+        })
+    }
+
     pub(crate) fn suspend(&self) {
         *self
             .connection
@@ -123,6 +150,7 @@ impl DynamicToolMcpServer {
     pub(crate) async fn start(
         request_handle: AppServerRequestHandle,
         mut thread_start_params: ThreadStartParams,
+        handoff_project: Option<std::path::PathBuf>,
         features: Features,
         app_event_tx: AppEventSender,
         status_updates: broadcast::Sender<ThreadStatusChangedNotification>,
@@ -146,6 +174,13 @@ impl DynamicToolMcpServer {
             overrides.remove("web_search");
         }
         let connection = Arc::new(RwLock::new(Some((request_handle, app_event_tx))));
+        let handoff_cwd = handoff_project.and_then(|cwd| {
+            std::fs::canonicalize(cwd)
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+        #[cfg(test)]
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let handler = DynamicToolMcpHandler {
             connection: Arc::clone(&connection),
             thread_start_params,
@@ -153,19 +188,27 @@ impl DynamicToolMcpServer {
             status_updates,
             server_config: server_config.clone(),
             worktrees,
+            #[cfg(test)]
+            calls: Arc::clone(&calls),
         };
         let service = StreamableHttpService::new(
             move || Ok(handler.clone()),
             Arc::new(LocalSessionManager::default()),
             StreamableHttpServerConfig::default(),
         );
-        let router =
-            Router::new()
-                .nest_service("/mcp", service)
-                .layer(middleware::from_fn_with_state(
-                    authorization,
-                    require_authorization,
-                ));
+        // Authenticated, read-only proof that the replacement viewer was built
+        // for the same local project as the live thread. The daemon never sends
+        // this capability through a proxy or follows a redirect.
+        let router = Router::new()
+            .nest_service("/mcp", service)
+            .route(
+                "/tui-handoff",
+                get(move || async move { Json(json!({"schema": 1, "cwd": handoff_cwd})) }),
+            )
+            .layer(middleware::from_fn_with_state(
+                authorization,
+                require_authorization,
+            ));
         let task = tokio::spawn(async move {
             if let Err(error) = axum::serve(listener, router).await {
                 tracing::warn!(%error, "TUI task-tools MCP server stopped");
@@ -175,6 +218,8 @@ impl DynamicToolMcpServer {
             connection,
             config: server_config,
             task,
+            #[cfg(test)]
+            calls,
         })
     }
 }
@@ -209,6 +254,8 @@ struct DynamicToolMcpHandler {
     status_updates: broadcast::Sender<ThreadStatusChangedNotification>,
     server_config: Value,
     worktrees: Option<crate::managed_worktree_tools::ManagedWorktreeTools>,
+    #[cfg(test)]
+    calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ServerHandler for DynamicToolMcpHandler {
@@ -265,6 +312,8 @@ impl ServerHandler for DynamicToolMcpHandler {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, McpError> {
+        #[cfg(test)]
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let metadata = &context.meta.0.0;
         let turn_metadata = metadata
             .get("x-codex-turn-metadata")

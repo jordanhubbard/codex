@@ -180,6 +180,19 @@ async fn run_control_socket_acceptor(
 
         let transport_event_tx = transport_event_tx.clone();
         tokio::spawn(async move {
+            // Local-only RPCs rely on this origin. Socket path permissions are
+            // defense in depth; authenticate the connected peer as well.
+            #[cfg(unix)]
+            if stream.ensure_same_user_peer().is_err() {
+                warn!("rejecting control socket peer with a different or unavailable uid");
+                return;
+            }
+            #[cfg(unix)]
+            let origin = super::ConnectionOrigin::LocalSocket;
+            // Windows keeps its existing RPC trust classification until the
+            // handoff is separately qualified with its peer-token checks.
+            #[cfg(not(unix))]
+            let origin = super::ConnectionOrigin::WebSocket;
             let mut shutdown_request = false;
             let mut negotiated_compression = WebSocketCompression::Plain;
             let websocket_config = WebSocketConfig::default();
@@ -241,6 +254,7 @@ async fn run_control_socket_acceptor(
                 websocket_reader,
                 transport_event_tx,
                 negotiated_compression,
+                origin,
             )
             .await;
         });

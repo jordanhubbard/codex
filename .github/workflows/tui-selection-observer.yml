@@ -9,6 +9,13 @@ on:
       - 'codex-rs/tui/src/cli.rs'
       - 'codex-rs/tui/src/lib.rs'
       - 'codex-rs/cli/src/main.rs'
+      - 'codex-rs/**/tui_handoff.rs'
+      - 'codex-rs/**/tui_mcp_handoff.rs'
+      - 'codex-rs/tui/src/dynamic_tools_mcp.rs'
+      - 'codex-rs/tui/src/app_server_session/**'
+      - 'codex-rs/core/src/session/config_refresh.rs'
+      - 'codex-rs/config/src/state.rs'
+      - 'codex-rs/uds/src/**'
   workflow_dispatch:
 
 permissions:
@@ -56,6 +63,19 @@ jobs:
         run: |
           cargo test --locked -p codex-tui --lib selection_observer::tests -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/native-module-tests.log"
+      - name: Qualify scoped native TUI transport handoff
+        working-directory: codex-rs
+        run: |
+          cargo test --locked -p codex-uds same_user_peer_is_verified -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-local-peer.log"
+          cargo test --locked -p codex-core --lib tui_mcp_handoff -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-config-controls.log"
+          cargo test --locked -p codex-tui --lib tui_mcp_handoff_routes_a_real_read -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-native-read.log"
+          cargo test --locked -p codex-app-server --lib tui_mcp_handoff -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-network-origin-refusal.log"
+          cargo test --locked -p codex-app-server --lib user_verification_rpc_network_peers_cannot_use_server_keys -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-origin-refusal.log"
       - name: Build the actual native CLI and verify capability
         working-directory: codex-rs
         run: |

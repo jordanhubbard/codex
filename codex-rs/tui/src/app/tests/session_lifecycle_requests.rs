@@ -3009,6 +3009,95 @@ async fn local_daemon_registers_approval_gated_mcp_tools_for_both_start_paths() 
         .await
 }
 
+#[tokio::test]
+async fn tui_mcp_handoff_routes_a_real_read_to_the_replacement_viewer() -> Result<()> {
+    boxed_future!(tui_mcp_handoff_scenario()).await
+}
+
+async fn tui_mcp_handoff_scenario() -> Result<()> {
+    let (app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
+    let mut server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+    server
+        .start_dynamic_tool_mcp(
+            app.config.clone(),
+            app.app_event_tx.clone(),
+            app.dynamic_tool_status_updates.clone(),
+        )
+        .await?;
+    let started = server.start_thread(&app.config).await?;
+    let thread_id = started.session.thread_id;
+    let old = match server.thread_tool_transport() {
+        crate::dynamic_tools_mcp::ThreadToolTransport::Mcp(server) => server,
+        _ => panic!("expected a viewer-owned MCP transport"),
+    };
+    server
+        .start_dynamic_tool_mcp(
+            app.config.clone(),
+            app.app_event_tx.clone(),
+            app.dynamic_tool_status_updates.clone(),
+        )
+        .await?;
+    let replacement = match server.thread_tool_transport() {
+        crate::dynamic_tools_mcp::ThreadToolTransport::Mcp(server) => server,
+        _ => panic!("expected a replacement viewer-owned MCP transport"),
+    };
+    let params = replacement
+        .handoff_params(thread_id, app.config.cwd.to_str().unwrap())
+        .unwrap();
+    let handle = server.request_handle();
+    let other_project = tempdir()?;
+    let mut wrong_project = params.clone();
+    wrong_project.cwd = other_project.path().to_string_lossy().into_owned();
+    let mut wrong_credential = params.clone();
+    wrong_credential.bearer_token = "550e8400-e29b-41d4-a716-446655440000".into();
+    for (index, refused) in [wrong_project, wrong_credential].into_iter().enumerate() {
+        let result = handle
+            .request_typed::<codex_app_server_protocol::ThreadTuiMcpRebindResponse>(
+                ClientRequest::ThreadTuiMcpRebind {
+                    request_id: AppServerRequestId::String(format!("handoff-refusal-{index}")),
+                    params: refused,
+                },
+            )
+            .await;
+        assert!(result.is_err());
+    }
+    let _: codex_app_server_protocol::ThreadTuiMcpRebindResponse = handle
+        .request_typed(ClientRequest::ThreadTuiMcpRebind {
+            request_id: AppServerRequestId::String("handoff-rebind".into()),
+            params,
+        })
+        .await?;
+    assert_eq!(old.call_count(), 0);
+    assert_eq!(replacement.call_count(), 0);
+    // Retire the first listener. The replacement counter also prevents a cached
+    // connection to that first handler from producing a false passing result.
+    drop(old);
+    let response: codex_app_server_protocol::McpServerToolCallResponse = handle.request_typed(
+        ClientRequest::McpServerToolCall {
+            request_id: AppServerRequestId::String("handoff-real-read".into()),
+            params: codex_app_server_protocol::McpServerToolCallParams {
+                thread_id: thread_id.to_string(), server: "codex_tui".into(), environment_id: None,
+                tool: "read_thread".into(),
+                arguments: Some(serde_json::json!({"threadId": thread_id.to_string(), "turnLimit": 1, "includeOutputs": false})),
+                meta: None,
+            },
+        }
+    ).await?;
+    assert_ne!(response.is_error, Some(true));
+    assert_eq!(replacement.call_count(), 1);
+    let text = response
+        .content
+        .iter()
+        .find_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        .expect("native task read content");
+    let read: serde_json::Value = serde_json::from_str(text)?;
+    assert_eq!(read["thread"]["id"], thread_id.to_string());
+    let still_same = server.thread_read(thread_id, false).await?;
+    assert_eq!(still_same.id, thread_id.to_string());
+    server.shutdown().await?;
+    Ok(())
+}
+
 async fn local_daemon_registers_approval_gated_mcp_tools_for_both_start_paths_scenario()
 -> Result<()> {
     let (mut app, events, _ops) = Box::pin(make_test_app_with_channels()).await;
