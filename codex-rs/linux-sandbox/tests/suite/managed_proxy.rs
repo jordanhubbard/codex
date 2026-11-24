@@ -493,13 +493,6 @@ printf 'legacy proc fallback\n'
 
 #[tokio::test]
 async fn unsupported_system_bwrap_falls_back_to_bundled_bwrap() {
-    if option_env!("CODEX_BWRAP_SHA256")
-        .is_some_and(|digest| digest.chars().any(|character| character != '0'))
-    {
-        eprintln!("skipping system bwrap fallback test: bundled binaries require a release digest");
-        return;
-    }
-
     if should_skip_bwrap_tests().await {
         eprintln!("skipping bwrap test: bubblewrap is unavailable");
         return;
@@ -513,10 +506,20 @@ async fn unsupported_system_bwrap_falls_back_to_bundled_bwrap() {
         return;
     };
 
-    let tempdir = tempfile::tempdir().expect("create isolated sandbox installation");
-    let sandbox_executable = tempdir.path().join("codex-linux-sandbox");
     let original_executable =
         cargo_bin("codex-linux-sandbox").expect("sandbox helper should exist");
+    let cwd = std::env::current_dir().expect("current directory should exist");
+    // Digest-enforcing helpers must receive their matching resource. Ordinary
+    // Cargo debug builds can use the system binary when no bundle is available;
+    // the helper still verifies any embedded digest before executing it.
+    let fixture_bwrap =
+        codex_linux_sandbox::find_bundled_bwrap_for_exe(&original_executable, &cwd, |key| {
+            std::env::var_os(key)
+        })
+        .map(AbsolutePathBuf::into_path_buf)
+        .unwrap_or(system_bwrap);
+    let tempdir = tempfile::tempdir().expect("create isolated sandbox installation");
+    let sandbox_executable = tempdir.path().join("codex-linux-sandbox");
     if std::fs::hard_link(&original_executable, &sandbox_executable).is_err() {
         codex_utils_cargo_bin::copy_executable(&original_executable, &sandbox_executable)
             .expect("copy sandbox executable");
@@ -524,7 +527,7 @@ async fn unsupported_system_bwrap_falls_back_to_bundled_bwrap() {
 
     let resources_dir = tempdir.path().join("codex-resources");
     std::fs::create_dir(&resources_dir).expect("create bundled resource directory");
-    std::os::unix::fs::symlink(&system_bwrap, resources_dir.join("bwrap"))
+    std::os::unix::fs::symlink(&fixture_bwrap, resources_dir.join("bwrap"))
         .expect("install bundled bubblewrap");
 
     let system_dir = tempdir.path().join("system");
@@ -544,7 +547,6 @@ async fn unsupported_system_bwrap_falls_back_to_bundled_bwrap() {
         format!("{}:{original_path}", system_dir.display()),
     );
 
-    let cwd = std::env::current_dir().expect("current directory should exist");
     let permission_profile =
         serde_json::to_string(&PermissionProfile::read_only()).expect("serialize profile");
     let output = tokio::time::timeout(
