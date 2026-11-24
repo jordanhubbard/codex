@@ -91,6 +91,9 @@ jobs:
                      'native_tui_compiled': True, 'native_cli_built': True,
                      'interactive_switch_qualified': False, 'task_tool_handoff_qualified': False}
           (root / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          print('NATIVE_BUILD_PROVENANCE ' + json.dumps({
+              'source': receipt['source'], 'binary_sha256': receipt['binary_sha256'],
+          }))
           shutil.copy2(binary, root / 'codex-selection-prototype')
           PY
       - name: Retain native artifact and original failures
