@@ -24,6 +24,20 @@ runs:
     - id: setup_ci
       uses: ./.github/actions/setup-ci
 
+    - name: Provision fork hosted macOS descriptor fixture capacity
+      if: github.repository == 'jordanhubbard/codex' && runner.os == 'macOS' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        # The genuine high-stdio fallback regression crosses Darwin OPEN_MAX
+        # (10240). Raising its child's soft rlimit cannot bypass this kernel cap.
+        # Only provision this exclusive hosted VM; preserve higher existing caps.
+        fixture_fd_limit=16384
+        current_fd_limit="$(sysctl -n kern.maxfilesperproc)"
+        if (( current_fd_limit < fixture_fd_limit )); then
+          sudo -n sysctl -w "kern.maxfilesperproc=$fixture_fd_limit"
+        fi
+        test "$(sysctl -n kern.maxfilesperproc)" -ge "$fixture_fd_limit"
+
     - name: Authenticate the Bazel cache
       id: gcs
       if: >-
