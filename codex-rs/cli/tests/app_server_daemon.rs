@@ -201,6 +201,21 @@ fn explicit_restart_applies_feature_overrides_and_preserves_saved_settings() -> 
             .args(["app-server", "daemon", "restart"])
             .args(args)
             .output()?;
+        eprintln!(
+            "SOCK736 restart previous={previous_pid:?} success={} stderr={}",
+            output.status.success(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        eprintln!(
+            "SOCK736 server log {}",
+            std::fs::read_to_string(
+                daemon
+                    .home
+                    .path()
+                    .join("app-server-daemon/app-server.stderr.log")
+            )
+            .unwrap_or_default(),
+        );
         ensure!(
             output.status.success(),
             "{}",

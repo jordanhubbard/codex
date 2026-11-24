@@ -71,6 +71,13 @@ pub async fn start_control_socket_acceptor(
 pub async fn bind_private_daemon_socket(
     socket_path: &Path,
 ) -> IoResult<(UnixListener, DaemonSocketFileGuard)> {
+    if std::env::var_os("CODEX_DIAGNOSTIC_SOCKET_OWNER").is_some() {
+        eprintln!(
+            "SOCK736 binding process={} path={}",
+            std::process::id(),
+            socket_path.display(),
+        );
+    }
     let socket_path = AbsolutePathBuf::from_absolute_path(socket_path)?;
     #[cfg(unix)]
     let (socket_path, rendezvous_path, mut startup_lock) = {

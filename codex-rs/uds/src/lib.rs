@@ -82,7 +82,27 @@ impl UnixStream {
     pub async fn connect(socket_path: impl AsRef<Path>) -> IoResult<Self> {
         platform::connect_stream(socket_path.as_ref())
             .await
-            .map(|inner| Self { inner })
+            .inspect_err(|err| {
+                if std::env::var_os("CODEX_DIAGNOSTIC_SOCKET_OWNER").is_some() {
+                    eprintln!(
+                        "SOCK736 connect failed client={} path={} error={err}",
+                        std::process::id(),
+                        socket_path.as_ref().display(),
+                    );
+                }
+            })
+            .map(|inner| {
+                #[cfg(target_os = "linux")]
+                if std::env::var_os("CODEX_DIAGNOSTIC_SOCKET_OWNER").is_some() {
+                    eprintln!(
+                        "SOCK736 connected client={} path={} peer={:?}",
+                        std::process::id(),
+                        socket_path.as_ref().display(),
+                        inner.peer_cred().map(|peer| peer.pid()),
+                    );
+                }
+                Self { inner }
+            })
     }
 }
 
