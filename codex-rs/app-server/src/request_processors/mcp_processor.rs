@@ -19,6 +19,8 @@ use crate::thread_state::ThreadStateManager;
 
 const MCP_THREAD_ID_META_KEY: &str = "threadId";
 
+mod tui_handoff;
+
 #[derive(Clone)]
 pub(crate) struct McpRequestProcessor {
     pub(super) auth_manager: Arc<AuthManager>,

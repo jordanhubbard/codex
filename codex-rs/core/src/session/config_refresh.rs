@@ -15,6 +15,50 @@ use codex_features::Feature;
 use tracing::warn;
 
 impl Session {
+    /// Publishes one authenticated TUI transport handoff without reloading host
+    /// files or changing the running turn. A concurrent publication is a conflict,
+    /// rather than a reason to retry a potentially ambiguous handoff.
+    pub(crate) async fn rebind_tui_mcp_transport(
+        &self,
+        expected_config: Arc<Config>,
+        expected_url: &str,
+        url: &str,
+        authorization: &str,
+    ) -> std::io::Result<ConfigRefreshOutcome> {
+        let config = expected_config.with_tui_mcp_transport(expected_url, url, authorization)?;
+        {
+            let mut state = self.state.lock().await;
+            if !Arc::ptr_eq(
+                &state.session_configuration.original_config_do_not_use,
+                &expected_config,
+            ) {
+                return Ok(ConfigRefreshOutcome::Stale);
+            }
+            // Respect revocation that arrived while the replacement was checked.
+            let binding = config.config_layer_stack.cloud_config_binding();
+            let guard = binding.map(codex_config::CloudConfigBundleBinding::read);
+            if guard
+                .as_ref()
+                .is_some_and(|guard| guard.status != CloudConfigBundleBindingStatus::Current)
+            {
+                return Ok(ConfigRefreshOutcome::Rejected);
+            }
+            if config.mcp_servers.get() == expected_config.mcp_servers.get()
+                && config.config_layer_stack.effective_config()
+                    == expected_config.config_layer_stack.effective_config()
+            {
+                // Attaching the same viewer again must not tear down an already
+                // correct connection or disturb an in-flight tool call.
+                return Ok(ConfigRefreshOutcome::Published);
+            }
+            state.session_configuration.original_config_do_not_use = Arc::new(config.clone());
+            state.guardian_config_snapshots.clear();
+            self.mark_mcp_runtime_dirty(McpRefreshReason::McpConfigReloaded);
+        }
+        self.schedule_mcp_prewarm();
+        Ok(ConfigRefreshOutcome::Published)
+    }
+
     pub(crate) async fn disable_mcp_enterprise_auth(&self) {
         {
             let mut state = self.state.lock().await;

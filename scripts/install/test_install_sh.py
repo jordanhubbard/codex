@@ -499,7 +499,9 @@ class InstallShTest(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             oldest = releases / f"{versions[0]}-{target}"
             helper = oldest / "bin/codex-code-mode-host"
-            shutil.copy("/bin/sleep", helper)
+            # Use the standalone shell image: /bin/sh can be a dispatcher that
+            # re-execs a system shell outside the copied release directory.
+            shutil.copy("/bin/bash", helper)
             if system.sysname == "Darwin":
                 # A copied macOS system binary cannot run with its platform signature.
                 subprocess.run(
@@ -507,8 +509,17 @@ class InstallShTest(unittest.TestCase):
                     check=True,
                     capture_output=True,
                 )
+
             # A helper can outlive its parent CLI; retain its whole release.
-            with subprocess.Popen([str(helper), "300"]) as running:
+            # A copied shell runs a blocking builtin while retaining the actual
+            # release-owned executable image. Multicall sleep binaries cannot
+            # reliably execute after being renamed to a package helper.
+            def start_held_helper():
+                return subprocess.Popen(
+                    ["sh", "-c", "read -r _"], executable=helper, stdin=subprocess.PIPE
+                )
+
+            with start_held_helper() as running:
                 try:
                     second, _ = run_installer_in(
                         root, versions[1], **install_options[versions[1]]
@@ -623,7 +634,7 @@ class InstallShTest(unittest.TestCase):
                             readable, "installer did not attempt retirement"
                         )
                         self.assertEqual(os.read(ready_fd, 128), b"ready\n")
-                        with subprocess.Popen([str(helper), "300"]) as late_helper:
+                        with start_held_helper() as late_helper:
                             try:
                                 os.write(resume_fd, b"continue\n")
                                 raced, _ = installing.result(timeout=30)

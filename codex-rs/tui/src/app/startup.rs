@@ -1417,6 +1417,29 @@ See the Codex keymap documentation for supported actions and examples."
             loop {
                 let displayed_session = backends.displayed;
                 let displayed_owner = backends.displayed_owner();
+                if crate::selection_observer::enabled() {
+                    let observer_target = backends
+                        .settings
+                        .get(&displayed_owner)
+                        .map(|settings| &settings.target)
+                        .unwrap_or(&app.app_server_target);
+                    let selection_is_settled = !app.reconnect.offline
+                        && app.pending_thread_switch_resets == 0
+                        && app.active_thread_id == app.chat_widget.thread_id()
+                        && !app.chat_widget.is_read_only_view()
+                        && crate::selection_observer::same_host(
+                            observer_target,
+                            crate::projectless::has_only_local_environments(
+                                &app.environment_manager,
+                            ),
+                        );
+                    crate::selection_observer::publish(
+                        selection_is_settled
+                            .then(|| app.active_thread_id)
+                            .flatten()
+                            .map(|id| id.to_string()),
+                    );
+                }
                 if let Some(events) = parked_side_completions.remove(&displayed_owner) {
                     for event in events {
                         app.app_event_tx.send(event);

@@ -84,6 +84,10 @@ pub struct Cli {
     #[arg(long)]
     pub no_daemon: bool,
 
+    /// Report settled local thread selection to an inherited private Unix pipe.
+    #[arg(long, value_name = "FD")]
+    pub selection_observer_fd: Option<i32>,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
