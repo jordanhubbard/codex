@@ -81,6 +81,10 @@ jobs:
       - name: Install the pinned native Rust toolchain
         working-directory: codex-rs
         run: rustup toolchain install 1.99.1 --profile minimal --component rust-src
+      - name: Configure pinned Codex V8 artifacts for the runtime helper
+        uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: aarch64-apple-darwin
       - name: Compile full TUI and test observation controls
         working-directory: codex-rs
         run: |
