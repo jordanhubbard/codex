@@ -598,6 +598,13 @@ impl UnifiedExecProcessManager {
                     .output_handles()
                     .output_closed
                     .load(Ordering::Acquire));
+        eprintln!(
+            "NET734 process ready {} stored={process_stored} exited={} exit={:?} paused={}",
+            context.call_id,
+            process.has_exited(),
+            process.exit_code(),
+            *context.session.subscribe_elicitation_pause_state().borrow(),
+        );
         let mut initial_exec_command_guard = InitialExecCommandGuard {
             active: None,
             metrics_sidecar,
@@ -644,6 +651,7 @@ impl UnifiedExecProcessManager {
             deadline,
         )
         .await;
+        eprintln!("NET734 collection finished {}", context.call_id);
         if let Some(completion) = completion.as_mut()
             && !process.has_exited()
         {

@@ -177,15 +177,20 @@ pub(crate) fn spawn_exit_watcher(
     let interaction_lock = process.interaction_lock();
 
     tokio::spawn(async move {
+        eprintln!("NET734 watcher waiting exit {call_id}");
         exit_token.cancelled().await;
+        eprintln!("NET734 watcher exited {call_id}");
         output_drained.notified().await;
+        eprintln!("NET734 watcher output drained {call_id}");
         // Deferred network denial deliberately remains observable for a short
         // window after process exit. Do not classify the terminal event until
         // that monitor has settled, even when output closes immediately.
         if let Some(network_denial_monitor) = network_denial_monitor {
             let _ = network_denial_monitor.await;
         }
+        eprintln!("NET734 watcher denial monitor settled {call_id}");
         let _interaction_guard = interaction_lock.lock_owned().await;
+        eprintln!("NET734 watcher acquired lock {call_id}");
 
         let duration = Instant::now().saturating_duration_since(started_at);
         let plugin_metrics_sidecar = plugin_metrics_sidecar
