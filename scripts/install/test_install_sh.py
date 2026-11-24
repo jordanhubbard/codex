@@ -486,7 +486,9 @@ class InstallShTest(unittest.TestCase):
                     capture_output=True,
                 )
             # A helper can outlive its parent CLI; retain its whole release.
-            with subprocess.Popen([str(helper), "300"]) as running:
+            # Multicall coreutils selects the sleep applet from argv[0]. Keep
+            # that name while executing the actual release-owned helper image.
+            with subprocess.Popen(["sleep", "300"], executable=helper) as running:
                 try:
                     second, _ = run_installer_in(
                         root, versions[1], **install_options[versions[1]]
