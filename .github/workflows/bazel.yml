@@ -32,8 +32,10 @@ jobs:
         include:
           # macOS
           - os: macos-15-xlarge
+            fork_runner: macos-26
             target: aarch64-apple-darwin
           - os: macos-15-xlarge
+            fork_runner: macos-15-intel
             target: x86_64-apple-darwin
 
           # Linux
@@ -48,7 +50,7 @@ jobs:
           # - os: ubuntu-24.04-arm
           #   target: aarch64-unknown-linux-gnu
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ github.repository == 'jordanhubbard/codex' && matrix.fork_runner || matrix.os }}
 
     # Configure a human readable name for each job
     name: Bazel test on ${{ matrix.os }} for ${{ matrix.target }}
@@ -153,9 +155,7 @@ jobs:
           - 2
           - 3
           - 4
-    runs-on:
-      group: ${{ github.event.repository.name }}-runners
-      labels: ${{ github.event.repository.name }}-windows-x64
+    runs-on: ${{ github.repository == 'jordanhubbard/codex' && 'windows-latest' || fromJSON(format('{{"group":"{0}-runners","labels":"{0}-windows-x64"}}', github.event.repository.name)) }}
     name: Bazel test on windows-latest for x86_64-pc-windows-gnullvm shard ${{ matrix.shard }}/4
     environment:
       name: bazel
@@ -273,9 +273,7 @@ jobs:
     # it a larger timeout. Also allow manual runs for native toolchain changes.
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 90
-    runs-on:
-      group: ${{ github.event.repository.name }}-runners
-      labels: ${{ github.event.repository.name }}-windows-x64
+    runs-on: ${{ github.repository == 'jordanhubbard/codex' && 'windows-latest' || fromJSON(format('{{"group":"{0}-runners","labels":"{0}-windows-x64"}}', github.event.repository.name)) }}
     name: Bazel test on windows-latest for x86_64-pc-windows-msvc (native main)
     environment:
       name: bazel
@@ -369,13 +367,15 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - os: macos-15-xlarge
+            fork_runner: macos-26
             target: aarch64-apple-darwin
           - os: windows-latest
+            fork_runner: windows-latest
             target: x86_64-pc-windows-gnullvm
             runs_on:
               group: ${{ github.event.repository.name }}-runners
               labels: ${{ github.event.repository.name }}-windows-x64
-    runs-on: ${{ matrix.runs_on || matrix.os }}
+    runs-on: ${{ github.repository == 'jordanhubbard/codex' && matrix.fork_runner || matrix.runs_on || matrix.os }}
     name: Bazel clippy on ${{ matrix.os }} for ${{ matrix.target }}
     environment:
       name: bazel
@@ -473,13 +473,15 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - os: macos-15-xlarge
+            fork_runner: macos-26
             target: aarch64-apple-darwin
           - os: windows-latest
+            fork_runner: windows-latest
             target: x86_64-pc-windows-gnullvm
             runs_on:
               group: ${{ github.event.repository.name }}-runners
               labels: ${{ github.event.repository.name }}-windows-x64
-    runs-on: ${{ matrix.runs_on || matrix.os }}
+    runs-on: ${{ github.repository == 'jordanhubbard/codex' && matrix.fork_runner || matrix.runs_on || matrix.os }}
     name: Verify release build on ${{ matrix.os }} for ${{ matrix.target }}
     environment:
       name: bazel
