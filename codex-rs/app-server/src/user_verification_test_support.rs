@@ -289,3 +289,26 @@ pub(super) fn write_auth(home: &std::path::Path, token: &str) -> Result<()> {
         AuthCredentialsStoreMode::File,
     )
 }
+
+// The full dispatcher has large debug-build futures. Match the app-server
+// tracing fixtures' dedicated 8 MiB test stack, constructing the future there.
+// This changes neither production worker stacks nor any security assertion.
+pub(super) fn run_dispatcher_scenario<F, Fut>(name: &str, scenario: F) -> Result<()>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let worker = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || -> Result<()> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(Box::pin(scenario()))
+        })?;
+    match worker.join() {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
