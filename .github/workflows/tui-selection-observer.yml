@@ -173,7 +173,7 @@ jobs:
       SOURCE_RUN: ${{ inputs.artifact_run }}
       EXPECTED_SOURCE: ${{ inputs.artifact_source }}
       EXPECTED_SHA256: ${{ inputs.artifact_sha256 }}
-      CONSUMER_SOURCE: 171754416521aeb5248d9f4979af64b0a1b90b48
+      CONSUMER_SOURCE: 1ec19931875433cd8dc2c8e3025033dc57f15bd9
     steps:
       - name: Validate inputs and native worker
         run: |
