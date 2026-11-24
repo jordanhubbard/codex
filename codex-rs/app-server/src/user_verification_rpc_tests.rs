@@ -86,8 +86,15 @@ async fn user_verification_rpc_disconnect_cancels_worker_and_releases_slot() -> 
     Ok(())
 }
 
-#[tokio::test]
-async fn user_verification_rpc_network_peers_cannot_use_server_keys() -> Result<()> {
+#[test]
+fn user_verification_rpc_network_peers_cannot_use_server_keys() -> Result<()> {
+    super::test_support::run_dispatcher_scenario(
+        "user_verification_rpc_network_peers_cannot_use_server_keys",
+        user_verification_rpc_network_peers_cannot_use_server_keys_scenario,
+    )
+}
+
+async fn user_verification_rpc_network_peers_cannot_use_server_keys_scenario() -> Result<()> {
     for origin in [
         ConnectionOrigin::LocalSocket,
         ConnectionOrigin::WebSocket,
@@ -120,8 +127,16 @@ async fn user_verification_rpc_network_peers_cannot_use_server_keys() -> Result<
     Ok(())
 }
 
-#[tokio::test]
-async fn tui_mcp_handoff_network_origins_are_rejected_before_thread_lookup() -> Result<()> {
+#[test]
+fn tui_mcp_handoff_network_origins_are_rejected_before_thread_lookup() -> Result<()> {
+    super::test_support::run_dispatcher_scenario(
+        "tui_mcp_handoff_network_origins_are_rejected_before_thread_lookup",
+        tui_mcp_handoff_network_origins_are_rejected_before_thread_lookup_scenario,
+    )
+}
+
+async fn tui_mcp_handoff_network_origins_are_rejected_before_thread_lookup_scenario() -> Result<()>
+{
     for origin in [ConnectionOrigin::WebSocket, ConnectionOrigin::RemoteControl] {
         let mut h = Harness::new(origin, || true).await?;
         h.initialize("codex-tui", true).await;

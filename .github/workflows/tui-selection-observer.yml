@@ -16,6 +16,8 @@ on:
       - "codex-rs/core/src/session/config_refresh.rs"
       - "codex-rs/config/src/state.rs"
       - "codex-rs/uds/src/**"
+      - "codex-rs/app-server/src/user_verification_rpc_tests.rs"
+      - "codex-rs/app-server/src/user_verification_test_support.rs"
   workflow_dispatch:
     inputs:
       artifact_run:
@@ -82,19 +84,34 @@ jobs:
         run: |
           cargo test --locked -p codex-tui --lib selection_observer::tests -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/native-module-tests.log"
-      - name: Qualify scoped native TUI transport handoff
+      - name: Qualify actual same-user socket peer
         working-directory: codex-rs
         run: |
           cargo test --locked -p codex-uds same_user_peer_is_verified -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-local-peer.log"
+      - name: Read actual native thread through replacement viewer
+        working-directory: codex-rs
+        run: |
           cargo test --locked -p codex-tui --lib tui_mcp_handoff_routes_a_real_read -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-native-read.log"
+      - name: Verify stable and experimental protocol contracts
+        working-directory: codex-rs
+        run: |
           cargo test --locked -p codex-app-server-protocol --lib -- --test-threads=1 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-protocol-contracts.log"
+      - name: Preserve handoff configuration and reload policy
+        working-directory: codex-rs
+        run: |
           cargo test --locked -p codex-core --lib tui_mcp_handoff -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-config-controls.log"
+      - name: Refuse native handoff from network origins
+        working-directory: codex-rs
+        run: |
           cargo test --locked -p codex-app-server --lib tui_mcp_handoff -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-network-origin-refusal.log"
+      - name: Retain native verification key origin restrictions
+        working-directory: codex-rs
+        run: |
           cargo test --locked -p codex-app-server --lib user_verification_rpc_network_peers_cannot_use_server_keys -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-origin-refusal.log"
       - name: Build the actual native CLI and verify capability
