@@ -115,7 +115,7 @@ jobs:
       SOURCE_RUN: ${{ inputs.artifact_run }}
       EXPECTED_SOURCE: ${{ inputs.artifact_source }}
       EXPECTED_SHA256: ${{ inputs.artifact_sha256 }}
-      CONSUMER_SOURCE: 171754416521aeb5248d9f4979af64b0a1b90b48
+      CONSUMER_SOURCE: 1ec19931875433cd8dc2c8e3025033dc57f15bd9
     steps:
       - name: Validate inputs and native worker
         run: |
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: jordanhubbard/webmux
-          ref: 171754416521aeb5248d9f4979af64b0a1b90b48
+          ref: 1ec19931875433cd8dc2c8e3025033dc57f15bd9
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
