@@ -335,12 +335,14 @@ impl AppServerSession {
         mut response: ThreadResumeResponse,
         scope: HistoryHydrationScope<'_>,
     ) -> Result<AppServerStartedThread> {
-        if let Some(params) = self
-            .dynamic_tool_mcp
-            .as_ref()
-            .and_then(|server| server.handoff_params(thread_id, response.cwd.as_str()))
+        if !self.uses_remote_workspace()
+            && let Some(params) = self
+                .dynamic_tool_mcp
+                .as_ref()
+                .and_then(|server| server.handoff_params(thread_id, response.cwd.as_str()))
         {
-            // This server is constructed only for an embedded/local-daemon TUI.
+            // A reconnect can retain a local viewer's MCP server while changing backends.
+            // Its bearer capability must only go to an embedded/local-daemon session.
             // A loaded resume ignores config overrides; use a scoped hot update
             // rather than resuming again or writing the global MCP configuration.
             let request_id = self.next_request_id();

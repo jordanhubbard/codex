@@ -168,6 +168,8 @@ async fn reconnect_restores_history_permissions_and_resumes_unsent_input() -> Re
                         assert_eq!(params["collaborationMode"], json!(expected_submitted_mode));
                         Some(json!({"result": {"turn": {"id": "fresh", "items": [], "status": "inProgress"}}}))
                     }
+                    // In particular, never accept a native MCP rebind carrying the
+                    // retained local viewer's bearer capability on this remote connection.
                     method => panic!("unexpected reconnect request: {method}"),
                 })).await?);
             }
