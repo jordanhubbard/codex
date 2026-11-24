@@ -3017,7 +3017,12 @@ fn tui_mcp_handoff_routes_a_real_read_to_the_replacement_viewer() -> Result<()> 
 }
 
 async fn tui_mcp_handoff_scenario() -> Result<()> {
-    let (app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
+    let (mut app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
+    // The generic widget fixture uses a snapshot-only /tmp/project path.
+    // A real handoff must prove an existing project, owned for this whole test.
+    let project = tempdir()?;
+    app.config.cwd = project.path().to_path_buf().abs();
+    assert!(app.config.cwd.is_dir());
     let mut server = crate::start_embedded_app_server_for_picker(&app.config).await?;
     server
         .start_dynamic_tool_mcp(
