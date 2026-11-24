@@ -13,6 +13,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -56,6 +58,32 @@ impl Drop for Package {
     }
 }
 
+fn package_directory(nonce: u128) -> Result<Package> {
+    static NEXT_PACKAGE: AtomicU64 = AtomicU64::new(0);
+    // Wall-clock readings may repeat across parallel tests on hosted workers.
+    let sequence = NEXT_PACKAGE.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "voice-actor-{}-{nonce}-{sequence}",
+        std::process::id()
+    ));
+    // Only own (and later remove) a directory this allocation created.
+    fs::create_dir(&root)?;
+    Ok(Package(root))
+}
+
+#[test]
+fn private_packages_survive_identical_clock_readings() -> Result<()> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let first = package_directory(nonce)?;
+    let second = package_directory(nonce)?;
+    assert_ne!(first.0, second.0, "parallel fixtures shared a directory");
+    fs::write(first.0.join("marker"), b"first")?;
+    fs::write(second.0.join("marker"), b"second")?;
+    drop(first);
+    assert_eq!(fs::read(second.0.join("marker"))?, b"second");
+    Ok(())
+}
+
 // The child discovers its installation through current_exe, exactly as the public facade does.
 pub fn package(test: &str) -> Result<Option<PathBuf>> {
     let source = std::env::current_exe()?;
@@ -71,8 +99,7 @@ pub fn package(test: &str) -> Result<Option<PathBuf>> {
         ));
     }
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let package =
-        Package(std::env::temp_dir().join(format!("voice-actor-{}-{nonce}", std::process::id())));
+    let package = package_directory(nonce)?;
     let root = &package.0;
     fs::create_dir_all(root.join("bin"))?;
     fs::create_dir_all(root.join("codex-resources/voice/bin"))?;
