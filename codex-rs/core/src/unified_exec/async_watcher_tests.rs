@@ -67,11 +67,14 @@ async fn streaming_output_harness() -> anyhow::Result<StreamingOutputHarness> {
     })
 }
 
-#[test_case::test_case(b""; "no_late_output")]
-#[test_case::test_case(b"late\n"; "with_late_output")]
+#[test_case::test_case(b"", false; "no_late_output")]
+#[test_case::test_case(b"late\n", false; "with_late_output")]
+#[test_case::test_case(b"", true; "active_collection_no_late_output")]
+#[test_case::test_case(b"late\n", true; "active_collection_with_late_output")]
 #[tokio::test]
 async fn completed_output_preserves_bytes_before_subscription(
     late_output: &[u8],
+    hold_interaction: bool,
 ) -> anyhow::Result<()> {
     let StreamingOutputHarness {
         process,
@@ -96,6 +99,13 @@ async fn completed_output_preserves_bytes_before_subscription(
     .await;
     assert_eq!(model_output.to_bytes(), b"early\n");
 
+    // A collector can retain this lock while an unrelated network approval
+    // pauses model-facing tool results. Process completion must remain visible.
+    let _active_collection = if hold_interaction {
+        Some(process.interaction_lock().lock_owned().await)
+    } else {
+        None
+    };
     start_streaming_output(&process, &context);
     #[allow(deprecated)]
     let cwd = context.step_context.turn.cwd.clone().into();
