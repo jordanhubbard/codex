@@ -346,7 +346,9 @@ mod tests {
     #[test]
     fn selection_is_local_only_for_owned_private_execution_sockets() -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
-        let same_host = |target| super::same_host(target, true);
+        fn same_host(target: &crate::AppServerTarget) -> bool {
+            super::same_host(target, true)
+        }
         assert!(!super::same_host(&crate::AppServerTarget::Embedded, false));
         let dir = tempfile::tempdir()?;
         let forwarded_path = dir.path().join("forwarded.sock");
