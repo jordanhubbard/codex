@@ -203,9 +203,10 @@ pub(super) async fn read_process_details(pid: u32) -> Result<(bool, ProcessIdent
 
 #[cfg(any(target_os = "linux", test))]
 fn parse_linux_process_details(stat: &[u8], boot_id: String) -> Result<(bool, ProcessIdentity)> {
-    let (state, start_ticks) = parse_stat(stat)?;
+    let (state, start_ticks, num_threads) = parse_stat(stat)?;
     Ok((
-        state == "Z",
+        // A leader can exit before its workers, which may still own the socket.
+        state == "Z" && num_threads <= 1,
         ProcessIdentity::Linux {
             boot_id,
             start_ticks,
@@ -224,7 +225,7 @@ async fn read_boot_id() -> Result<String> {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn parse_stat(stat: &[u8]) -> Result<(String, u64)> {
+fn parse_stat(stat: &[u8]) -> Result<(String, u64, u64)> {
     // comm (field 2) can contain spaces and closing parentheses. The final ')'
     // terminates it; splitting the whole line on whitespace miscounts fields.
     let end = stat
@@ -234,12 +235,17 @@ fn parse_stat(stat: &[u8]) -> Result<(String, u64)> {
     let fields = std::str::from_utf8(&stat[end + 1..]).context("invalid process stat fields")?;
     let mut fields = fields.split_whitespace();
     let state = fields.next().context("process stat has no state")?;
+    let num_threads = fields
+        .nth(/*n*/ 16)
+        .context("process stat has no thread count")?
+        .parse()
+        .context("process stat thread count is invalid")?;
     let start_ticks = fields
-        .nth(/*n*/ 18)
+        .nth(/*n*/ 1)
         .context("process stat has no start time")?
         .parse()
         .context("process stat start time is invalid")?;
-    Ok((state.to_string(), start_ticks))
+    Ok((state.to_string(), start_ticks, num_threads))
 }
 
 #[cfg(test)]

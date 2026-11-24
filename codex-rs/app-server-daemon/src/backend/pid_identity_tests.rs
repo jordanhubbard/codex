@@ -23,11 +23,12 @@ fn zombie_leader_with_a_live_thread_is_not_an_exited_process() {
             .0
     );
 }
+
 #[test]
 fn parses_start_ticks_after_comm_with_spaces_and_parentheses() {
     let stat =
         b"123 (codex \xff) worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654321 20";
-    assert_eq!(parse_stat(stat).unwrap(), ("S".to_string(), 987654321));
+    assert_eq!(parse_stat(stat).unwrap(), ("S".to_string(), 987654321, 17));
 }
 
 #[test]
