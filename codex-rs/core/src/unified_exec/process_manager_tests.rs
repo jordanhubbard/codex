@@ -594,6 +594,86 @@ async fn late_network_denial_grace_observes_cancellation_after_exit() -> anyhow:
 }
 
 #[tokio::test]
+#[cfg(target_os = "linux")]
+async fn short_exec_publishes_completion_while_tool_result_remains_paused() -> anyhow::Result<()> {
+    core_test_support::skip_if_sandbox!(Ok(()));
+
+    let (session, turn, rx_event) =
+        crate::session::tests::make_session_and_context_with_auth_and_config_and_rx(
+            crate::CodexAuth::from_api_key("test"),
+            Vec::new(),
+            |config| {
+                config.permissions.approval_policy = codex_config::Constrained::allow_any(
+                    codex_protocol::protocol::AskForApproval::Never,
+                );
+                config
+                    .permissions
+                    .set_permission_profile(
+                        codex_protocol::models::PermissionProfile::Disabled,
+                    )
+                    .expect("disable sandbox for process lifecycle test");
+            },
+        )
+        .await;
+    let context = UnifiedExecContext::new(
+        Arc::clone(&session),
+        crate::session::step_context::StepContext::for_test(Arc::clone(&turn)),
+        tokio_util::sync::CancellationToken::new(),
+        "short-exec".to_string(),
+    );
+    let environment = turn
+        .initial_environments
+        .primary()
+        .expect("primary environment");
+    let prepared = ParsedExecCommand::parse(
+        r#"{"cmd":"printf short-exec-done","yield_time_ms":1000}"#,
+        &session,
+        &context.step_context,
+        environment,
+    )?
+    .prepare(ExecCommandLifetime::Interactive)?;
+    let request = ExecCommandRequest {
+        prepared,
+        process_id: session
+            .services
+            .unified_exec_manager
+            .allocate_process_id()
+            .await,
+        network: None,
+    };
+    let elicitation = session.services.elicitations.register();
+    let execution = tokio::spawn(async move {
+        context
+            .session
+            .services
+            .unified_exec_manager
+            .exec_command(request, &context)
+            .await
+    });
+    let completion = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let codex_protocol::protocol::EventMsg::ItemCompleted(completed) =
+                rx_event.recv().await?.msg
+                && let codex_protocol::items::TurnItem::CommandExecution(item) = completed.item
+                && item.id == "short-exec"
+            {
+                return Ok::<_, async_channel::RecvError>(item);
+            }
+        }
+    })
+    .await;
+    let result_was_paused = !execution.is_finished();
+    drop(elicitation);
+    // Release the pause and settle the real execution even when the event deadline failed.
+    let response = tokio::time::timeout(Duration::from_secs(2), execution).await???;
+    assert!(result_was_paused, "tool result must wait for elicitation");
+    assert_eq!(completion??.exit_code, Some(0));
+    assert!(response.truncated_output(1024).contains("short-exec-done"));
+    assert!(response.process_id.is_none());
+    Ok(())
+}
+
+#[tokio::test]
 async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
     let (session, turn, rx_event) = crate::session::tests::make_session_and_context_with_rx().await;
     let context = UnifiedExecContext::new(
