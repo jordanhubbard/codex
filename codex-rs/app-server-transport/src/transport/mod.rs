@@ -201,6 +201,8 @@ pub enum TransportEvent {
 pub enum ConnectionOrigin {
     Stdio,
     InProcess,
+    /// A connection accepted by the same-user local control socket listener.
+    LocalSocket,
     WebSocket,
     RemoteControl,
 }

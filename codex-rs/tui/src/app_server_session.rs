@@ -414,6 +414,7 @@ pub(crate) struct AppServerSession {
     pub(crate) frozen_receipt: Option<(ThreadId, String)>,
     pub(crate) unread_revisions: HashMap<ThreadId, String>,
     task_tool_threads: HashSet<ThreadId>,
+    unconfirmed_task_tool_handoffs: HashSet<ThreadId>,
     task_tool_capabilities_dir: Option<AbsolutePathBuf>,
     pub(crate) task_search: crate::task_mentions::TaskSearch,
     remote_cwd_override: Option<PathBuf>,
@@ -678,6 +679,7 @@ impl AppServerSession {
             frozen_receipt: None,
             unread_revisions: HashMap::new(),
             task_tool_threads: HashSet::new(),
+            unconfirmed_task_tool_handoffs: HashSet::new(),
             task_tool_capabilities_dir: None,
             task_search: crate::task_mentions::TaskSearch::default(),
             remote_cwd_override: None,
@@ -764,6 +766,7 @@ impl AppServerSession {
         view.model_provider_override = self.model_provider_override.clone();
         view.history_support = self.history_support;
         view.thread_settings_update_supported = self.thread_settings_update_supported;
+        view.unconfirmed_task_tool_handoffs = self.unconfirmed_task_tool_handoffs.clone();
         view.default_model = self.default_model.clone();
         view.available_models = self.available_models.clone();
         view
@@ -841,6 +844,7 @@ impl AppServerSession {
             DynamicToolMcpServer::start(
                 self.request_handle(),
                 thread_start_params,
+                Some(config.cwd.to_path_buf()),
                 config.features.get().clone(),
                 app_event_tx,
                 status_updates,
@@ -893,9 +897,14 @@ impl AppServerSession {
     /// Carry capabilities that may exist only in memory when the optional cache is unwritable.
     pub(crate) fn inherit_task_tool_capabilities(&mut self, previous: &Self) {
         self.task_tool_threads.extend(&previous.task_tool_threads);
+        self.unconfirmed_task_tool_handoffs
+            .extend(&previous.unconfirmed_task_tool_handoffs);
     }
 
     pub(crate) fn task_tools_available(&self, thread_id: ThreadId) -> bool {
+        if self.unconfirmed_task_tool_handoffs.contains(&thread_id) {
+            return false;
+        }
         self.task_tool_threads.contains(&thread_id)
             || self
                 .task_tool_capabilities_dir

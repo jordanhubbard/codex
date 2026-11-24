@@ -1578,6 +1578,20 @@ impl CodexThread {
         .await
     }
 
+    /// Replace only a viewer-owned TUI tools transport. Callers authenticate the
+    /// replacement endpoint and its project before requesting publication.
+    pub async fn rebind_tui_mcp_transport(
+        &self,
+        expected_config: Arc<crate::config::Config>,
+        expected_url: &str,
+        url: &str,
+        authorization: &str,
+    ) -> std::io::Result<ConfigRefreshOutcome> {
+        self.session
+            .rebind_tui_mcp_transport(expected_config, expected_url, url, authorization)
+            .await
+    }
+
     /// Refreshes this thread's Apps tools before returning their runtime state.
     pub async fn refresh_codex_apps_tools(
         &self,
