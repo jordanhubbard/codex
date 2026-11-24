@@ -1402,7 +1402,12 @@ See the Codex keymap documentation for supported actions and examples."
                         && app.pending_thread_switch_resets == 0
                         && app.active_thread_id == app.chat_widget.thread_id()
                         && !app.chat_widget.is_read_only_view()
-                        && crate::selection_observer::same_host(observer_target);
+                        && crate::selection_observer::same_host(
+                            observer_target,
+                            crate::projectless::has_only_local_environments(
+                                &app.environment_manager,
+                            ),
+                        );
                     crate::selection_observer::publish(
                         selection_is_settled
                             .then(|| app.active_thread_id)
