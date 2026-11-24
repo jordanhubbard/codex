@@ -3,19 +3,19 @@ name: Downstream TUI selection observer
 on:
   pull_request:
     paths:
-      - '.github/workflows/tui-selection-observer.yml'
-      - 'codex-rs/tui/src/selection_observer.rs'
-      - 'codex-rs/tui/src/app/startup.rs'
-      - 'codex-rs/tui/src/cli.rs'
-      - 'codex-rs/tui/src/lib.rs'
-      - 'codex-rs/cli/src/main.rs'
-      - 'codex-rs/**/tui_handoff.rs'
-      - 'codex-rs/**/tui_mcp_handoff.rs'
-      - 'codex-rs/tui/src/dynamic_tools_mcp.rs'
-      - 'codex-rs/tui/src/app_server_session/**'
-      - 'codex-rs/core/src/session/config_refresh.rs'
-      - 'codex-rs/config/src/state.rs'
-      - 'codex-rs/uds/src/**'
+      - ".github/workflows/tui-selection-observer.yml"
+      - "codex-rs/tui/src/selection_observer.rs"
+      - "codex-rs/tui/src/app/startup.rs"
+      - "codex-rs/tui/src/cli.rs"
+      - "codex-rs/tui/src/lib.rs"
+      - "codex-rs/cli/src/main.rs"
+      - "codex-rs/**/tui_handoff.rs"
+      - "codex-rs/**/tui_mcp_handoff.rs"
+      - "codex-rs/tui/src/dynamic_tools_mcp.rs"
+      - "codex-rs/tui/src/app_server_session/**"
+      - "codex-rs/core/src/session/config_refresh.rs"
+      - "codex-rs/config/src/state.rs"
+      - "codex-rs/uds/src/**"
   workflow_dispatch:
 
 permissions:
@@ -38,9 +38,9 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     env:
-      CARGO_BUILD_JOBS: '4'
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      CARGO_BUILD_JOBS: "4"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

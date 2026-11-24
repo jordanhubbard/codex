@@ -3009,9 +3009,11 @@ async fn local_daemon_registers_approval_gated_mcp_tools_for_both_start_paths() 
         .await
 }
 
-#[tokio::test]
-async fn tui_mcp_handoff_routes_a_real_read_to_the_replacement_viewer() -> Result<()> {
-    boxed_future!(tui_mcp_handoff_scenario()).await
+#[test]
+fn tui_mcp_handoff_routes_a_real_read_to_the_replacement_viewer() -> Result<()> {
+    // This loads the full TUI and embedded server, just like directory-change
+    // scenarios below. Use their existing isolated runtime and stack budget.
+    run_embedded_tui_scenario("tui-mcp-handoff", tui_mcp_handoff_scenario)
 }
 
 async fn tui_mcp_handoff_scenario() -> Result<()> {
