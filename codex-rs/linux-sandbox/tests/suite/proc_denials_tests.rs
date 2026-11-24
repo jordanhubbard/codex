@@ -7,6 +7,7 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
@@ -15,8 +16,8 @@ use tokio::process::Command;
 
 #[test_case::test_case(false, false; "read_only_fresh_proc")]
 #[test_case::test_case(false, true; "read_only_legacy_proc")]
-#[test_case::test_case(true, false; "root_write_fresh_proc")]
-#[test_case::test_case(true, true; "root_write_legacy_proc")]
+#[test_case::test_case(true, false; "approved_root_write_fresh_proc")]
+#[test_case::test_case(true, true; "approved_root_write_legacy_proc")]
 #[tokio::test]
 async fn explicit_proc_denial_survives_filesystem_binds(root_write: bool, no_proc: bool) {
     if should_skip_bwrap_tests().await {
@@ -24,16 +25,23 @@ async fn explicit_proc_denial_survives_filesystem_binds(root_write: bool, no_pro
     }
     let cwd = tempfile::tempdir().expect("isolated command directory");
     let mut policy = FileSystemSandboxPolicy::read_only();
-    if root_write {
-        policy.entries.push(FileSystemSandboxEntry::new(
-            AbsolutePathBuf::from_absolute_path("/").unwrap().into(),
-            FileSystemAccessMode::Write,
-        ));
-    }
     policy.entries.push(FileSystemSandboxEntry::new(
         AbsolutePathBuf::from_absolute_path("/proc").unwrap().into(),
         FileSystemAccessMode::Deny,
     ));
+    if root_write {
+        // Exercise the real approved-command root bind, without requesting
+        // automatic read-only metadata mounts at nonexistent host-root paths.
+        let cwd_uri = AbsolutePathBuf::from_absolute_path(cwd.path())
+            .unwrap()
+            .into();
+        policy = policy.for_approved_command(&FileSystemSandboxPolicyContext {
+            cwd: &cwd_uri,
+            workspace_roots: std::slice::from_ref(&cwd_uri),
+            user_home_dir: None,
+            temporary_directories: Some(&[]),
+        });
+    }
     let profile =
         PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Enabled);
     let profile = serde_json::to_string(&profile).unwrap();
