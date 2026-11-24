@@ -1,0 +1,81 @@
+name: Downstream macOS fixture diagnosis
+
+on:
+  push:
+    branches: [ci/native-macos-fixtures]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    if: github.repository == 'jordanhubbard/codex'
+    name: Native fixtures (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Record assigned worker and descriptor capacity
+        run: |
+          receipts="$RUNNER_TEMP/native-fixtures"
+          mkdir -p "$receipts"
+          echo "FIXTURE_RECEIPTS=$receipts" >> "$GITHUB_ENV"
+          top -l 4 -s 5 -n 0 > "$receipts/worker-top.log"
+          memory_pressure -Q > "$receipts/worker-memory.log"
+          df -Pk "$RUNNER_TEMP" /tmp > "$receipts/worker-disk.log"
+          sysctl kern.maxfiles kern.maxfilesperproc > "$receipts/kernel-fd-limits.log"
+          python3 - <<'PY'
+          import fcntl, json, os, pathlib, resource
+          before = resource.getrlimit(resource.RLIMIT_NOFILE)
+          soft = max(before[0], 16384)
+          if before[1] != resource.RLIM_INFINITY:
+              soft = min(soft, before[1])
+          resource.setrlimit(resource.RLIMIT_NOFILE, (soft, before[1]))
+          report = {'before': before, 'after': resource.getrlimit(resource.RLIMIT_NOFILE)}
+          with open('/dev/null', 'rb') as source:
+              try:
+                  fd = fcntl.fcntl(source.fileno(), fcntl.F_DUPFD, 10240)
+              except OSError as error:
+                  report['sparse_high_fd_errno'] = error.errno
+              else:
+                  report['sparse_high_fd'] = fd
+                  os.close(fd)
+          target = pathlib.Path(os.environ['RUNNER_TEMP'], 'native-fixtures', 'process-fd-probe.json')
+          target.write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report))
+          PY
+      - name: Prepare the original Bazel test environment
+        uses: ./.github/actions/prepare-bazel-ci
+        with:
+          target: ${{ matrix.target }}
+          cache-scope: native-macos-fixtures
+      - name: Exercise the original native test targets
+        env:
+          RUST_BACKTRACE: '1'
+        run: |
+          ./.github/scripts/run-bazel-ci.sh \
+            --print-failed-action-summary --print-failed-test-logs -- \
+            test --test_output=errors --test_tag_filters=-argument-comment-lint -- \
+            //codex-rs/utils/pty:pty-unit-tests \
+            //codex-rs/realtime-webrtc:realtime-webrtc-session_actor-test \
+            2>&1 | tee "$FIXTURE_RECEIPTS/tests.log"
+      - name: Retain the original test result and worker evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: native-macos-fixtures-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-fixtures
