@@ -22,9 +22,13 @@ tokens, terminal content, or instructions to replay.
 
 Selection is reported only when the active thread and transcript agree, replay
 has settled, the view is live, the backend is connected, and execution is local.
-Local execution means an embedded backend or an owner-only Unix socket owned by
-the effective account. WebSocket backends, including loopback WebSockets, and
-cloud backends report null. A transition or disconnected view also reports null.
+Local execution currently admits an embedded backend or a local-daemon target
+using an owner-only Unix socket in Codex's guarded executor-local directory,
+including a verified rendezvous alias. Direct sockets under CODEX_HOME are
+unavailable, even when the target was classified as a local daemon. Explicit remote
+targets, including private Unix sockets, report null, as do WebSocket and cloud
+backends. Managed-profile and forwarded-default-path qualification remain release
+gates; owner and mode checks on an arbitrary private socket are insufficient. A transition or disconnected view also reports null.
 Unchanged state is not repeated. Backpressure defers publication and cannot block
 the UI. Lost or malformed observation must remove the launcher's confidence;
 the previous UUID can remain available for an explicit recovery choice.

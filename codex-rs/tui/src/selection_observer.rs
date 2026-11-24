@@ -73,20 +73,42 @@ pub(crate) fn same_host(target: &crate::AppServerTarget) -> bool {
     use std::os::unix::fs::MetadataExt;
     match target {
         AppServerTarget::Embedded => true,
-        AppServerTarget::LocalDaemon { endpoint, .. } | AppServerTarget::Remote { endpoint } => {
-            match endpoint {
-                RemoteAppServerEndpoint::UnixSocket { socket_path } => {
-                    use std::os::unix::fs::FileTypeExt;
-                    std::fs::metadata(socket_path.as_path()).is_ok_and(|metadata| {
+        AppServerTarget::LocalDaemon { endpoint, .. } => match endpoint {
+            RemoteAppServerEndpoint::UnixSocket { socket_path } => {
+                use std::os::unix::fs::FileTypeExt;
+                // Native daemons bind in the executor-local guarded directory and
+                // publish a verified rendezvous alias. A direct private socket at
+                // CODEX_HOME can instead be an SSH forward.
+                let Ok(directory) = codex_uds::shared_daemon_socket_directory() else {
+                    return false;
+                };
+                let physical = if socket_path.as_path().parent() == Some(directory.as_path()) {
+                    socket_path.clone()
+                } else {
+                    let Ok(Some(physical)) = codex_app_server_client::verified_local_daemon_socket(
+                        socket_path.as_path(),
+                    ) else {
+                        return false;
+                    };
+                    physical
+                };
+                let directory_is_private =
+                    std::fs::symlink_metadata(&directory).is_ok_and(|metadata| {
+                        metadata.is_dir()
+                            && metadata.uid() == unsafe { libc::geteuid() }
+                            && metadata.mode() & 0o777 == 0o700
+                    });
+                directory_is_private
+                    && std::fs::symlink_metadata(physical.as_path()).is_ok_and(|metadata| {
                         metadata.file_type().is_socket()
                             && metadata.uid() == unsafe { libc::geteuid() }
                             && metadata.mode() & 0o077 == 0
                     })
-                }
-                RemoteAppServerEndpoint::WebSocket { .. } => false,
             }
-        }
-        AppServerTarget::Cloud => false,
+            RemoteAppServerEndpoint::WebSocket { .. } => false,
+        },
+        // An explicitly supplied Unix socket may be a forward to another host.
+        AppServerTarget::Remote { .. } | AppServerTarget::Cloud => false,
     }
 }
 
@@ -322,13 +344,32 @@ mod tests {
     fn selection_is_local_only_for_owned_private_execution_sockets() -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("execution.sock");
+        let forwarded_path = dir.path().join("forwarded.sock");
+        let _forwarded = std::os::unix::net::UnixListener::bind(&forwarded_path)?;
+        std::fs::set_permissions(&forwarded_path, std::fs::Permissions::from_mode(0o600))?;
+        assert!(!same_host(&crate::AppServerTarget::LocalDaemon {
+            endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
+                socket_path: forwarded_path
+                    .try_into()
+                    .expect("absolute forwarded socket"),
+            },
+            allow_embedded_fallback: false,
+        }));
+        let shared = codex_uds::prepare_shared_daemon_socket_directory()?;
+        let socket_file = tempfile::NamedTempFile::new_in(shared)?.into_temp_path();
+        std::fs::remove_file(&socket_file)?;
+        let path = socket_file.to_path_buf();
         let _listener = std::os::unix::net::UnixListener::bind(&path)?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-        let target = crate::AppServerTarget::Remote {
-            endpoint: crate::RemoteAppServerEndpoint::UnixSocket {
-                socket_path: path.clone().try_into().expect("absolute test socket"),
-            },
+        let endpoint = crate::RemoteAppServerEndpoint::UnixSocket {
+            socket_path: path.clone().try_into().expect("absolute test socket"),
+        };
+        assert!(!same_host(&crate::AppServerTarget::Remote {
+            endpoint: endpoint.clone(),
+        }));
+        let target = crate::AppServerTarget::LocalDaemon {
+            endpoint,
+            allow_embedded_fallback: false,
         };
         assert!(same_host(&target));
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
