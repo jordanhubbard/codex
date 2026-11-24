@@ -103,6 +103,9 @@ pub(crate) struct UnifiedExecProcess {
     output: OutputHandles,
     output_drained: Arc<Notify>,
     interaction_lock: Arc<Mutex<()>>,
+    /// Orders stdin interaction events before completion without waiting for
+    /// model-facing output collection, which may be paused by another approval.
+    terminal_event_lock: Arc<Mutex<()>>,
     state_tx: watch::Sender<ProcessState>,
     state_rx: watch::Receiver<ProcessState>,
     output_task: Option<JoinHandle<()>>,
@@ -149,6 +152,7 @@ impl UnifiedExecProcess {
             output,
             output_drained,
             interaction_lock: Arc::new(Mutex::new(())),
+            terminal_event_lock: Arc::new(Mutex::new(())),
             state_tx,
             state_rx,
             output_task: None,
@@ -201,6 +205,10 @@ impl UnifiedExecProcess {
 
     pub(super) fn interaction_lock(&self) -> Arc<Mutex<()>> {
         Arc::clone(&self.interaction_lock)
+    }
+
+    pub(super) fn terminal_event_lock(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.terminal_event_lock)
     }
 
     pub(super) fn has_exited(&self) -> bool {

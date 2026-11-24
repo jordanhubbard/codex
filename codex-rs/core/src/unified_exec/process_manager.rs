@@ -885,6 +885,9 @@ impl UnifiedExecProcessManager {
         }
         // Serialize writes and polls on the original terminal.
         let _interaction_guard = locked_process.interaction_lock().lock_owned().await;
+        // Preserve stdin-before-completion event ordering independently of the
+        // initial collector, which can wait on an unrelated network approval.
+        let _terminal_event_guard = locked_process.terminal_event_lock().lock_owned().await;
         // A queued write must observe strict review enabled while it was waiting.
         let strict_auto_review = context.step_context.turn.strict_auto_review_enabled();
         let approval = {

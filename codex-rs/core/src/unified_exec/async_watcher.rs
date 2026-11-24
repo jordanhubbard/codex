@@ -174,7 +174,7 @@ pub(crate) fn spawn_exit_watcher(
     let call_id = context.call_id.clone();
     let exit_token = process.cancellation_token();
     let output_drained = process.output_drained_notify();
-    let interaction_lock = process.interaction_lock();
+    let terminal_event_lock = process.terminal_event_lock();
 
     tokio::spawn(async move {
         exit_token.cancelled().await;
@@ -185,7 +185,7 @@ pub(crate) fn spawn_exit_watcher(
         if let Some(network_denial_monitor) = network_denial_monitor {
             let _ = network_denial_monitor.await;
         }
-        let _interaction_guard = interaction_lock.lock_owned().await;
+        let _terminal_event_guard = terminal_event_lock.lock_owned().await;
 
         let duration = Instant::now().saturating_duration_since(started_at);
         let plugin_metrics_sidecar = plugin_metrics_sidecar
