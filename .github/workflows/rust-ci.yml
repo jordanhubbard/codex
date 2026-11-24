@@ -173,7 +173,8 @@ jobs:
     # Keep this Bazel job advisory until the public build and cache rollout is verified.
     continue-on-error: true
     runs-on: ${{ github.repository == 'jordanhubbard/codex' && matrix.fork_runner || matrix.runs_on || matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+    # The fork's cold Bazel compilation also needs time before advisory lint runs.
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || matrix.timeout_minutes }}
     needs: changed
     environment:
       name: bazel

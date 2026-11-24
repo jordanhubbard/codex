@@ -44,7 +44,8 @@ jobs:
     # Keep the Bazel CLI build advisory until the public build and cache rollout is verified.
     continue-on-error: true
     runs-on: ${{ github.repository == 'jordanhubbard/codex' && 'ubuntu-24.04' || fromJSON(format('{{"group":"{0}-runners","labels":"{0}-linux-x64"}}', github.event.repository.name)) }}
-    timeout-minutes: 90
+    # Its cold Bazel/V8 build exceeded 90 minutes before the SDK checks ran.
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || 90 }}
     environment:
       name: bazel
       deployment: false

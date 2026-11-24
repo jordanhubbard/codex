@@ -25,7 +25,9 @@ jobs:
     # PRs use the sharded Windows cross-compiled test jobs below. Post-merge
     # pushes to main also run the native Windows test job for broader Windows
     # signal without putting PR latency back on the critical path.
-    timeout-minutes: 120
+    # Cold V8 source builds on the fork's hosted runners need more build time.
+    # Keep upstream budgets and every command/test deadline unchanged.
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || 120 }}
     strategy:
       fail-fast: false
       matrix:
@@ -146,7 +148,7 @@ jobs:
       contents: read
       id-token: write
     # Build and test Windows shards on separate Windows runners.
-    timeout-minutes: 90
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -355,7 +357,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 90
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || 90 }}
     strategy:
       fail-fast: false
       matrix:
@@ -465,7 +467,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 90
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || 90 }}
     strategy:
       fail-fast: false
       matrix:
