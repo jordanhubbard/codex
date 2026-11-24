@@ -119,29 +119,36 @@ jobs:
       - name: Build the actual native CLI and verify capability
         working-directory: codex-rs
         run: |
-          cargo build --locked -p codex-cli --bin codex 2>&1 |
+          cargo build --locked -p codex-cli --bin codex -p codex-code-mode-host --bin codex-code-mode-host 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/native-build.log"
           "$CARGO_TARGET_DIR/debug/codex" --help > "$RUNNER_TEMP/selection-receipts/help.txt"
           "$CARGO_TARGET_DIR/debug/codex" --version > "$RUNNER_TEMP/selection-receipts/version.txt"
+          "$CARGO_TARGET_DIR/debug/codex-code-mode-host" --help > "$RUNNER_TEMP/selection-receipts/code-mode-host-help.txt"
+          cargo test --locked -p codex-code-mode-host --test stdio remote_session_persists_values_forwards_delegates_and_controls_cells -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/code-mode-host-protocol.log"
           python3 - <<'PY'
           import hashlib, json, os, pathlib, platform, shutil, subprocess
           root = pathlib.Path(os.environ['RUNNER_TEMP'], 'selection-receipts')
           binary = pathlib.Path(os.environ['CARGO_TARGET_DIR'], 'debug/codex')
+          host = binary.with_name('codex-code-mode-host')
+          host_digest = hashlib.file_digest(host.open('rb'), 'sha256').hexdigest()
           assert '--selection-observer-fd' in (root / 'help.txt').read_text()
           digest = hashlib.sha256()
           with binary.open('rb') as stream:
               for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                   digest.update(chunk)
           receipt = {'source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-                     'binary_sha256': digest.hexdigest(),
+                     'binary_sha256': digest.hexdigest(), 'code_mode_host_sha256': host_digest,
                      'machine': platform.machine(), 'run': os.environ['GITHUB_RUN_ID'],
                      'native_tui_compiled': True, 'native_cli_built': True,
                      'interactive_switch_qualified': False, 'task_tool_handoff_qualified': False}
           (root / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
           print('NATIVE_BUILD_PROVENANCE ' + json.dumps({
               'source': receipt['source'], 'binary_sha256': receipt['binary_sha256'],
+              'code_mode_host_sha256': host_digest,
           }))
           shutil.copy2(binary, root / 'codex-selection-prototype')
+          shutil.copy2(host, root / 'codex-code-mode-host')
           PY
       - name: Retain native artifact and original failures
         if: always()
