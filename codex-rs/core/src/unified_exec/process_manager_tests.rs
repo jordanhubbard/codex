@@ -600,7 +600,7 @@ async fn short_exec_publishes_completion_while_tool_result_remains_paused() -> a
 
     let (session, turn, rx_event) =
         crate::session::tests::make_session_and_context_with_auth_and_config_and_rx(
-            crate::CodexAuth::from_api_key("test"),
+            codex_login::CodexAuth::from_api_key("test"),
             Vec::new(),
             |config| {
                 config.permissions.approval_policy = codex_config::Constrained::allow_any(
