@@ -487,6 +487,7 @@ class InstallShTest(unittest.TestCase):
                     check=True,
                     capture_output=True,
                 )
+
             # A helper can outlive its parent CLI; retain its whole release.
             # A copied shell runs a blocking builtin while retaining the actual
             # release-owned executable image. Multicall sleep binaries cannot
