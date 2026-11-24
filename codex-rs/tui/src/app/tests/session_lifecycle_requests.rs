@@ -3331,6 +3331,7 @@ async fn tui_mcp_handoff_scenario() -> Result<()> {
     server
         .start_dynamic_tool_mcp(
             app.config.clone(),
+            /*workspace_enabled*/ false,
             app.app_event_tx.clone(),
             app.dynamic_tool_status_updates.clone(),
         )
@@ -3377,6 +3378,7 @@ async fn tui_mcp_handoff_scenario() -> Result<()> {
     server
         .start_dynamic_tool_mcp(
             app.config.clone(),
+            /*workspace_enabled*/ false,
             app.app_event_tx.clone(),
             app.dynamic_tool_status_updates.clone(),
         )
