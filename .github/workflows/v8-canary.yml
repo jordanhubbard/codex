@@ -2,10 +2,17 @@
 name: Fence startup executable evidence
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        type: choice
+        options: [startup, network]
+        default: startup
+        description: Select independent hosted diagnostic
 permissions:
   contents: read
 jobs:
   startup:
+    if: inputs.scope == 'startup'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 8
     strategy:
@@ -50,3 +57,26 @@ jobs:
           sudo -n systemctl show "fence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus || true
           sudo -n journalctl -k --since '-5 minutes' --no-pager -n 250 | grep -Ei 'fence|apparmor|denied' || true
           sudo -n journalctl --since '-5 minutes' --no-pager -n 300 | grep -Ei 'fence.*(permission|denied|executable|failed)|apparmor.*DENIED' || true
+
+  v8-network:
+    if: inputs.scope == 'network'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Fetch the original pinned V8 commit without its source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'ImageOS=%s ImageVersion=%s\n' "$ImageOS" "$ImageVersion"
+          git --version
+          curl --connect-timeout 10 --max-time 30 --silent --show-error --fail \
+            --output /dev/null --write-out 'HTTP=%{http_code} remote=%{remote_ip} seconds=%{time_total}\n' \
+            'https://github.com/denoland/v8.git/info/refs?service=git-upload-pack'
+          probe="$RUNNER_TEMP/v8-network-probe.git"
+          git init --bare "$probe"
+          timeout 120s git -C "$probe" -c protocol.version=2 fetch \
+            --filter=tree:0 --depth=1 --no-tags \
+            https://github.com/denoland/v8.git c4ca1eccb90c5464d826b7713dc27178a53b0cfe
+          test "$(git -C "$probe" rev-parse FETCH_HEAD)" = c4ca1eccb90c5464d826b7713dc27178a53b0cfe
+          test "$(git -C "$probe" cat-file -t FETCH_HEAD)" = commit
+          echo 'Pinned commit fetched. Source-tree/submodule builds and benchmark execution remain separate gates.'
