@@ -74,10 +74,10 @@ jobs:
         run: |
           cargo test --locked -p codex-uds same_user_peer_is_verified -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-local-peer.log"
-          cargo test --locked -p codex-core --lib tui_mcp_handoff -- --nocapture 2>&1 |
-            tee "$RUNNER_TEMP/selection-receipts/handoff-config-controls.log"
           cargo test --locked -p codex-tui --lib tui_mcp_handoff_routes_a_real_read -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-native-read.log"
+          cargo test --locked -p codex-core --lib tui_mcp_handoff -- --nocapture 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-config-controls.log"
           cargo test --locked -p codex-app-server --lib tui_mcp_handoff -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-network-origin-refusal.log"
           cargo test --locked -p codex-app-server --lib user_verification_rpc_network_peers_cannot_use_server_keys -- --nocapture 2>&1 |
