@@ -51,7 +51,9 @@ jobs:
     # This is a downstream integration qualifier, not an upstream release job.
     if: github.repository != 'openai/codex' && (github.event_name != 'workflow_dispatch' || inputs.artifact_run == '')
     runs-on: macos-26
-    timeout-minutes: 60
+    # Full native test binaries plus CLI compilation exceeded the prior hour
+    # while every test gate passed. This bounds build time, not test deadlines.
+    timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: "4"
       CARGO_PROFILE_DEV_DEBUG: "0"
