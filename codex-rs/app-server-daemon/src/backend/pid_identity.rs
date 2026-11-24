@@ -198,11 +198,16 @@ pub(super) async fn read_process_details(pid: u32) -> Result<(bool, ProcessIdent
     let stat = tokio::fs::read(format!("/proc/{pid}/stat"))
         .await
         .with_context(|| format!("failed to read process stat for pid-managed process {pid}"))?;
-    let (state, start_ticks) = parse_stat(&stat)?;
+    parse_linux_process_details(&stat, read_boot_id().await?)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_process_details(stat: &[u8], boot_id: String) -> Result<(bool, ProcessIdentity)> {
+    let (state, start_ticks) = parse_stat(stat)?;
     Ok((
         state == "Z",
         ProcessIdentity::Linux {
-            boot_id: read_boot_id().await?,
+            boot_id,
             start_ticks,
         },
     ))

@@ -2,6 +2,28 @@ use super::parse_stat;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn zombie_leader_with_a_live_thread_is_not_an_exited_process() {
+    // /proc/PID/stat field 20 is the thread count; field 22 is the start tick.
+    // A Linux leader can be Z while a worker still owns the listening socket.
+    let live_group = b"42 (daemon) Z 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 2 18 987654321";
+    let exited_group = b"42 (daemon) Z 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 1 18 987654321";
+    let (exited, identity) =
+        super::parse_linux_process_details(live_group, "boot".to_string()).unwrap();
+    assert!(!exited, "a live worker keeps the process and socket alive");
+    assert_eq!(
+        identity,
+        super::ProcessIdentity::Linux {
+            boot_id: "boot".to_string(),
+            start_ticks: 987654321,
+        }
+    );
+    assert!(
+        super::parse_linux_process_details(exited_group, "boot".to_string())
+            .unwrap()
+            .0
+    );
+}
+#[test]
 fn parses_start_ticks_after_comm_with_spaces_and_parentheses() {
     let stat =
         b"123 (codex \xff) worker) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654321 20";
