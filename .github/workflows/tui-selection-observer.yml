@@ -17,6 +17,19 @@ on:
       - "codex-rs/config/src/state.rs"
       - "codex-rs/uds/src/**"
   workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: "Optional successful native producer run; empty builds current source"
+        type: string
+        default: ""
+      artifact_source:
+        description: "Artifact qualification: expected full native source commit"
+        type: string
+        default: ""
+      artifact_sha256:
+        description: "Artifact qualification: independently recorded binary SHA-256"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -34,7 +47,7 @@ defaults:
 jobs:
   native:
     # This is a downstream integration qualifier, not an upstream release job.
-    if: github.repository != 'openai/codex'
+    if: github.repository != 'openai/codex' && (github.event_name != 'workflow_dispatch' || inputs.artifact_run == '')
     runs-on: macos-26
     timeout-minutes: 60
     env:
@@ -76,6 +89,8 @@ jobs:
             tee "$RUNNER_TEMP/selection-receipts/handoff-local-peer.log"
           cargo test --locked -p codex-tui --lib tui_mcp_handoff_routes_a_real_read -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-native-read.log"
+          cargo test --locked -p codex-app-server-protocol --lib -- --test-threads=1 2>&1 |
+            tee "$RUNNER_TEMP/selection-receipts/handoff-protocol-contracts.log"
           cargo test --locked -p codex-core --lib tui_mcp_handoff -- --nocapture 2>&1 |
             tee "$RUNNER_TEMP/selection-receipts/handoff-config-controls.log"
           cargo test --locked -p codex-app-server --lib tui_mcp_handoff -- --nocapture 2>&1 |
@@ -104,6 +119,9 @@ jobs:
                      'native_tui_compiled': True, 'native_cli_built': True,
                      'interactive_switch_qualified': False, 'task_tool_handoff_qualified': False}
           (root / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          print('NATIVE_BUILD_PROVENANCE ' + json.dumps({
+              'source': receipt['source'], 'binary_sha256': receipt['binary_sha256'],
+          }))
           shutil.copy2(binary, root / 'codex-selection-prototype')
           PY
       - name: Retain native artifact and original failures
@@ -112,3 +130,120 @@ jobs:
         with:
           name: native-macos-selection-prototype
           path: ${{ runner.temp }}/selection-receipts
+
+  artifact-qualification:
+    # Reuses a known producer without claiming that this workflow's source built.
+    if: github.repository == 'jordanhubbard/codex' && github.event_name == 'workflow_dispatch' && inputs.artifact_run != ''
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SOURCE_RUN: ${{ inputs.artifact_run }}
+      EXPECTED_SOURCE: ${{ inputs.artifact_source }}
+      EXPECTED_SHA256: ${{ inputs.artifact_sha256 }}
+      CONSUMER_SOURCE: a7c1532117a7fc971ca0357c739728da48429fe9
+    steps:
+      - name: Validate inputs and native worker
+        run: |
+          test "$(uname -sm)" = 'Darwin arm64'
+          df -h "$RUNNER_TEMP"
+          memory_pressure
+          python3 - <<'PY'
+          import os, pathlib, re, shutil
+          for key, pattern in [('SOURCE_RUN', r'[1-9][0-9]{1,20}'), ('EXPECTED_SOURCE', r'[0-9a-f]{40}'), ('EXPECTED_SHA256', r'[0-9a-f]{64}')]:
+              assert re.fullmatch(pattern, os.environ[key]), 'invalid provenance input'
+          assert shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= 25 * 1024**3
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'selection-qualification').mkdir()
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: jordanhubbard/webmux
+          ref: a7c1532117a7fc971ca0357c739728da48429fe9
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-macos-selection-prototype
+          path: ${{ runner.temp }}/selection-artifact
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+      - name: Verify successful producer and exact binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          run = json.loads(subprocess.check_output(['gh', 'api', 'repos/jordanhubbard/codex/actions/runs/' + os.environ['SOURCE_RUN']]))
+          assert run['conclusion'] == 'success' and run['head_sha'] == os.environ['EXPECTED_SOURCE']
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          receipt = json.loads((root / 'selection-artifact/receipt.json').read_text())
+          assert receipt['source'] == os.environ['EXPECTED_SOURCE'] and str(receipt['run']) == os.environ['SOURCE_RUN']
+          assert receipt['native_tui_compiled'] and receipt['native_cli_built']
+          binary = root / 'selection-artifact/codex-selection-prototype'
+          with binary.open('rb') as stream:
+              digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+          assert digest == receipt['binary_sha256'] == os.environ['EXPECTED_SHA256']
+          binary.chmod(binary.stat().st_mode | 0o100)
+          consumer = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert consumer == os.environ['CONSUMER_SOURCE']
+          (root / 'selection-qualification/provenance.json').write_text(json.dumps({
+              'artifact_source': receipt['source'], 'artifact_run': receipt['run'], 'binary_sha256': digest,
+              'consumer_source': consumer, 'workflow_source': os.environ['GITHUB_SHA'],
+              'daemon_profile': 'private managed selection of the same native artifact',
+              'active_work_qualified': False, 'four_session_survival_qualified': False,
+          }, indent=2) + '\n')
+          PY
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: webmux/server/go.mod
+          cache-dependency-path: webmux/server/go.sum
+      - name: Build actual WebMux launcher
+        run: go -C webmux/server build -p 1 -o "$RUNNER_TEMP/selection-webmux" ./cmd/webmux
+      - name: Qualify remote refusal and managed concurrent reconnect with host state
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          output = root / 'selection-qualification'
+          binary = root / 'selection-artifact/codex-selection-prototype'
+          helper = root / 'selection-webmux'
+          with helper.open('rb') as stream:
+              helper_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
+          base = ['python3', 'webmux/scripts/qualify-codex-selection.py', '--binary', str(binary), '--expected-sha256', os.environ['EXPECTED_SHA256']]
+          profiles = {
+              'remote-negative': ['--profile', 'remote-negative'],
+              'managed': ['--profile', 'managed', '--companion', '--reconnect', '--host-cache',
+                  '--daemon-binary', str(binary), '--daemon-sha256', os.environ['EXPECTED_SHA256'],
+                  '--webmux-binary', str(helper), '--webmux-sha256', helper_hash],
+          }
+          failed = False
+          for name, args in profiles.items():
+              with (output / (name + '.log')).open('x') as log:
+                  result = subprocess.run(base + args + ['--output', str(output / (name + '.json'))], stdout=log, stderr=subprocess.STDOUT)
+              failed |= result.returncode != 0
+          raise SystemExit(1 if failed else 0)
+          PY
+      - name: Retain qualification receipts and owned fixture logs
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil
+          output = pathlib.Path(os.environ['RUNNER_TEMP'], 'selection-qualification')
+          for receipt in output.glob('*.json'):
+              data = json.loads(receipt.read_text())
+              if 'fixture_root' not in data:
+                  continue
+              fixture = pathlib.Path(data['fixture_root']).resolve()
+              assert fixture.parent == pathlib.Path('/private/tmp') and fixture.name.startswith('wm-native-selection-')
+              logs = output / (receipt.stem + '-fixture-logs')
+              logs.mkdir()
+              for source in fixture.glob('*.log'):
+                  assert not source.is_symlink() and source.is_file()
+                  shutil.copy2(source, logs / source.name)
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: native-selection-artifact-qualification
+          path: ${{ runner.temp }}/selection-qualification

@@ -67,10 +67,13 @@ pub(crate) fn publish(thread_id: Option<String>) {
 }
 
 #[cfg(unix)]
-pub(crate) fn same_host(target: &crate::AppServerTarget) -> bool {
+pub(crate) fn same_host(target: &crate::AppServerTarget, local_execution_confirmed: bool) -> bool {
     use crate::AppServerTarget;
     use crate::RemoteAppServerEndpoint;
     use std::os::unix::fs::MetadataExt;
+    if !local_execution_confirmed {
+        return false;
+    }
     match target {
         AppServerTarget::Embedded => true,
         AppServerTarget::LocalDaemon { endpoint, .. } => match endpoint {
@@ -113,7 +116,7 @@ pub(crate) fn same_host(target: &crate::AppServerTarget) -> bool {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn same_host(_: &crate::AppServerTarget) -> bool {
+pub(crate) fn same_host(_: &crate::AppServerTarget, _: bool) -> bool {
     false
 }
 
@@ -343,6 +346,8 @@ mod tests {
     #[test]
     fn selection_is_local_only_for_owned_private_execution_sockets() -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
+        let same_host = |target| super::same_host(target, true);
+        assert!(!super::same_host(&crate::AppServerTarget::Embedded, false));
         let dir = tempfile::tempdir()?;
         let forwarded_path = dir.path().join("forwarded.sock");
         let _forwarded = std::os::unix::net::UnixListener::bind(&forwarded_path)?;
@@ -372,6 +377,7 @@ mod tests {
             allow_embedded_fallback: false,
         };
         assert!(same_host(&target));
+        assert!(!super::same_host(&target, false));
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
         assert!(!same_host(&target));
         assert!(!same_host(&crate::AppServerTarget::Cloud));

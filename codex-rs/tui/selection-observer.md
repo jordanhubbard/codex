@@ -22,6 +22,8 @@ tokens, terminal content, or instructions to replay.
 
 Selection is reported only when the active thread and transcript agree, replay
 has settled, the view is live, the backend is connected, and execution is local.
+Execution environments must also be positively local; an embedded server may
+use a remote executor, and an absent environment is not local evidence.
 Local execution currently admits an embedded backend or a local-daemon target
 using an owner-only Unix socket in Codex's guarded executor-local directory,
 including a verified rendezvous alias. Direct sockets under CODEX_HOME are
