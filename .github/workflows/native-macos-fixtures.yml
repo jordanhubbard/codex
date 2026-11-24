@@ -63,13 +63,31 @@ jobs:
         with:
           target: ${{ matrix.target }}
           cache-scope: native-macos-fixtures
+      - name: Verify real high-descriptor capacity after preparation
+        run: |
+          sysctl kern.maxfiles kern.maxfilesperproc > "$FIXTURE_RECEIPTS/kernel-fd-limits-after.log"
+          python3 - <<'PY'
+          import fcntl, json, os, pathlib, resource
+          before = resource.getrlimit(resource.RLIMIT_NOFILE)
+          resource.setrlimit(resource.RLIMIT_NOFILE, (max(before[0], 16384), before[1]))
+          with open('/dev/null', 'rb') as source:
+              fd = fcntl.fcntl(source.fileno(), fcntl.F_DUPFD, 10240)
+              try:
+                  assert fd >= 10240
+                  report = {'high_fd': fd, 'rlimit': resource.getrlimit(resource.RLIMIT_NOFILE)}
+              finally:
+                  os.close(fd)
+          target = pathlib.Path(os.environ['FIXTURE_RECEIPTS'], 'process-fd-probe-after.json')
+          target.write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report))
+          PY
       - name: Exercise the original native test targets
         env:
           RUST_BACKTRACE: '1'
         run: |
           ./.github/scripts/run-bazel-ci.sh \
             --print-failed-action-summary --print-failed-test-logs -- \
-            test --test_output=errors --test_tag_filters=-argument-comment-lint -- \
+            test --test_output=errors --test_env=RUST_BACKTRACE=1 --test_tag_filters=-argument-comment-lint -- \
             //codex-rs/utils/pty:pty-unit-tests \
             //codex-rs/realtime-webrtc:realtime-webrtc-session_actor-test \
             2>&1 | tee "$FIXTURE_RECEIPTS/tests.log"
