@@ -1,6 +1,7 @@
 //! Runtime-refresh regressions; pure authority resolution is tested with Config.
 
 use super::*;
+use crate::ConfigRefreshOutcome;
 use crate::StartThreadOptions;
 use crate::ThreadManager;
 use codex_config::loader::load_guardian_policy_snapshot;
