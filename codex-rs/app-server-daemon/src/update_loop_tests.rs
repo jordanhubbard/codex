@@ -300,7 +300,7 @@ printf '{release}' > "$root/auto-update-version"
             ),
             (running, running)
         );
-        let compatible = FakeInstallerHttp::new(InstallerResponse::Success(script.replace("else exit 2", "elif [ \"$4\" = --check-package-ownership ] || [ \"$4\" = --help ]; then exit 0; else exec sleep 30").into_bytes()));
+        let compatible = FakeInstallerHttp::new(InstallerResponse::Success(script.replace("else exit 2", "elif [ \"$3\" = --help ] || [ \"$4\" = --check-package-ownership ] || [ \"$4\" = --help ]; then exit 0; else exec sleep 30").into_bytes()));
         let output = super::migration::run(&compatible, &legacy).await.unwrap();
         assert_eq!(output, UpdateOutput {
         status: UpdateStatus::Updated,
