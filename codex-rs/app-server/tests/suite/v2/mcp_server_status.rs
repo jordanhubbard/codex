@@ -279,7 +279,8 @@ async fn mcp_server_status_discovers_thread_inventory(
                 .filter(|request| matcher.matches(request))
                 .count()
         };
-        if count("initialize") != initializations {
+        {
+            // Calibrate tagged ownership on passing iterations as well.
             let initialize_owners = requests
                 .iter()
                 .filter_map(|request| {
@@ -288,6 +289,8 @@ async fn mcp_server_status_discovers_thread_inventory(
                         json!({
                             "id": body["id"],
                             "clientVersion": body["params"]["clientInfo"]["version"],
+                            "clientName": body["params"]["clientInfo"]["name"],
+                            "capabilities": body["params"]["capabilities"],
                         })
                     })
                 })
