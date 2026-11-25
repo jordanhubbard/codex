@@ -2764,6 +2764,7 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
         web_search,
         no_alt_screen,
         no_daemon,
+        selection_observer_fd,
         prompt,
         mut config_overrides,
         ..
@@ -2785,6 +2786,7 @@ fn merge_interactive_cli_flags(interactive: &mut TuiCli, subcommand_cli: TuiCli)
     }
     interactive.no_alt_screen |= no_alt_screen;
     interactive.no_daemon |= no_daemon;
+    interactive.selection_observer_fd = selection_observer_fd.or(interactive.selection_observer_fd);
     if strict_config {
         interactive.strict_config = true;
     }

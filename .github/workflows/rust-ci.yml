@@ -172,8 +172,9 @@ jobs:
     name: Argument comment lint - ${{ matrix.name }}
     # Keep this Bazel job advisory until the public build and cache rollout is verified.
     continue-on-error: true
-    runs-on: ${{ matrix.runs_on || matrix.runner }}
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+    runs-on: ${{ github.repository == 'jordanhubbard/codex' && matrix.fork_runner || matrix.runs_on || matrix.runner }}
+    # The fork's cold Bazel compilation also needs time before advisory lint runs.
+    timeout-minutes: ${{ github.repository == 'jordanhubbard/codex' && 180 || matrix.timeout_minutes }}
     needs: changed
     environment:
       name: bazel
@@ -187,9 +188,11 @@ jobs:
             timeout_minutes: 30
           - name: macOS
             runner: macos-15-xlarge
+            fork_runner: macos-26
             timeout_minutes: 30
           - name: Windows
             runner: windows-x64
+            fork_runner: windows-latest
             timeout_minutes: 30
             runs_on:
               group: ${{ github.event.repository.name }}-runners

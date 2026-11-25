@@ -521,6 +521,26 @@ impl UnifiedExecProcessManager {
         &self,
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
+        completion: Option<&mut Completion<'_>>,
+    ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
+        let result = self
+            .exec_command_with_events(request, context, completion)
+            .await;
+        // Lifecycle events and process cleanup must finish before an unrelated
+        // elicitation pauses delivery of the captured tool result.
+        context
+            .session
+            .services
+            .elicitations
+            .wait_until_clear()
+            .await;
+        result
+    }
+
+    async fn exec_command_with_events(
+        &self,
+        request: ExecCommandRequest,
+        context: &UnifiedExecContext,
         mut completion: Option<&mut Completion<'_>>,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
         let prepared = &request.prepared;
@@ -640,7 +660,9 @@ impl UnifiedExecProcessManager {
             .ok_or_else(|| UnifiedExecError::process_failed("timeout_ms is too large".into()))?;
         let collected_output = Self::collect_output_until_deadline(
             process.output_handles(),
-            Some(context.session.subscribe_elicitation_pause_state()),
+            // A short command can exit during startup, before it needs a
+            // watcher. Publish its completion before pausing the tool result.
+            process_stored.then(|| context.session.subscribe_elicitation_pause_state()),
             deadline,
         )
         .await;

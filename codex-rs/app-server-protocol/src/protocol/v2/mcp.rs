@@ -15,6 +15,24 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
+/// Same-host replacement of an existing TUI-owned task-tools transport.
+/// The server retains tool approvals, allow lists and the thread configuration.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export_to = "v2/")]
+pub struct ThreadTuiMcpRebindParams {
+    pub thread_id: String,
+    pub cwd: String,
+    pub url: String,
+    #[ts(type = "string")]
+    pub bearer_token: codex_utils_redacted_string::RedactedString,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadTuiMcpRebindResponse {}
+
 v2_enum_from_core!(
     pub enum McpAuthStatus from codex_protocol::protocol::McpAuthStatus {
         Unknown,

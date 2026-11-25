@@ -168,6 +168,8 @@ async fn reconnect_restores_history_permissions_and_resumes_unsent_input() -> Re
                         assert_eq!(params["collaborationMode"], json!(expected_submitted_mode));
                         Some(json!({"result": {"turn": {"id": "fresh", "items": [], "status": "inProgress"}}}))
                     }
+                    // In particular, never accept a native MCP rebind carrying the
+                    // retained local viewer's bearer capability on this remote connection.
                     method => panic!("unexpected reconnect request: {method}"),
                 })).await?);
             }
@@ -188,8 +190,11 @@ async fn reconnect_restores_history_permissions_and_resumes_unsent_input() -> Re
                 app.config.features.get().clone(),
                 app.app_event_tx.clone(),
                 app.dynamic_tool_status_updates.clone(),
-                /*worktrees*/ None,
-                /*sidebar_backend*/ None,
+                crate::dynamic_tools_mcp::DynamicToolMcpServerOptions {
+                    handoff_project: Some(app.config.cwd.to_path_buf()),
+                    worktrees: None,
+                    sidebar_backend: None,
+                },
             )
             .await?,
         ));

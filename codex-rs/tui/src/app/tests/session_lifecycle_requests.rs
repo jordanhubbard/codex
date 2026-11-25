@@ -3313,6 +3313,161 @@ async fn local_daemon_registers_approval_gated_mcp_tools_for_both_start_paths() 
         .await
 }
 
+#[test]
+fn tui_mcp_handoff_routes_a_real_read_to_the_replacement_viewer() -> Result<()> {
+    // This loads the full TUI and embedded server, just like directory-change
+    // scenarios below. Use their existing isolated runtime and stack budget.
+    run_embedded_tui_scenario("tui-mcp-handoff", tui_mcp_handoff_scenario)
+}
+
+async fn tui_mcp_handoff_scenario() -> Result<()> {
+    let (mut app, _events, _ops) = Box::pin(make_test_app_with_channels()).await;
+    // The generic widget fixture uses a snapshot-only /tmp/project path.
+    // A real handoff must prove an existing project, owned for this whole test.
+    let project = tempdir()?;
+    app.config.cwd = project.path().to_path_buf().abs();
+    assert!(app.config.cwd.is_dir());
+    let mut server = crate::start_embedded_app_server_for_picker(&app.config).await?;
+    server
+        .start_dynamic_tool_mcp(
+            app.config.clone(),
+            /*workspace_enabled*/ false,
+            app.app_event_tx.clone(),
+            app.dynamic_tool_status_updates.clone(),
+        )
+        .await?;
+    let started = server.start_thread(&app.config).await?;
+    let thread_id = started.session.thread_id;
+    let handle = server.request_handle();
+    // A newly allocated empty thread has no persisted history to read. Create
+    // one through the real native shell path, without making any model request.
+    let _: codex_app_server_protocol::ThreadShellCommandResponse = handle
+        .request_typed(ClientRequest::ThreadShellCommand {
+            request_id: AppServerRequestId::String("handoff-owned-history".into()),
+            params: codex_app_server_protocol::ThreadShellCommandParams {
+                thread_id: thread_id.to_string(),
+                command: "echo native-handoff-history".into(),
+                timeout_ms: Some(5_000),
+            },
+        })
+        .await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = server
+                .next_event()
+                .await
+                .expect("native shell event stream");
+            if let codex_app_server_client::AppServerEvent::ServerNotification(notification) =
+                event.event
+                && let ServerNotification::TurnCompleted(completed) = *notification
+                && completed.thread_id == thread_id.to_string()
+            {
+                assert_eq!(
+                    completed.turn.status,
+                    codex_app_server_protocol::TurnStatus::Completed
+                );
+                break;
+            }
+        }
+    })
+    .await?;
+    let old = match server.thread_tool_transport() {
+        crate::dynamic_tools_mcp::ThreadToolTransport::Mcp(server) => server,
+        _ => panic!("expected a viewer-owned MCP transport"),
+    };
+    server
+        .start_dynamic_tool_mcp(
+            app.config.clone(),
+            /*workspace_enabled*/ false,
+            app.app_event_tx.clone(),
+            app.dynamic_tool_status_updates.clone(),
+        )
+        .await?;
+    let replacement = match server.thread_tool_transport() {
+        crate::dynamic_tools_mcp::ThreadToolTransport::Mcp(server) => server,
+        _ => panic!("expected a replacement viewer-owned MCP transport"),
+    };
+    let params = replacement
+        .handoff_params(thread_id, app.config.cwd.to_str().unwrap())
+        .unwrap();
+    let other_project = tempdir()?;
+    let mut wrong_project = params.clone();
+    wrong_project.cwd = other_project.path().to_string_lossy().into_owned();
+    let mut wrong_credential = params.clone();
+    wrong_credential.bearer_token = "550e8400-e29b-41d4-a716-446655440000".into();
+    for (index, refused) in [wrong_project, wrong_credential].into_iter().enumerate() {
+        let result = handle
+            .request_typed::<codex_app_server_protocol::ThreadTuiMcpRebindResponse>(
+                ClientRequest::ThreadTuiMcpRebind {
+                    request_id: AppServerRequestId::String(format!("handoff-refusal-{index}")),
+                    params: refused,
+                },
+            )
+            .await;
+        assert!(result.is_err());
+    }
+    let _: codex_app_server_protocol::ThreadTuiMcpRebindResponse = handle
+        .request_typed(ClientRequest::ThreadTuiMcpRebind {
+            request_id: AppServerRequestId::String("handoff-rebind".into()),
+            params,
+        })
+        .await?;
+    assert_eq!(old.call_count(), 0);
+    assert_eq!(replacement.call_count(), 0);
+    // Retire the first listener. The replacement counter also prevents a cached
+    // connection to that first handler from producing a false passing result.
+    drop(old);
+    let response: codex_app_server_protocol::McpServerToolCallResponse = handle.request_typed(
+        ClientRequest::McpServerToolCall {
+            request_id: AppServerRequestId::String("handoff-real-read".into()),
+            params: codex_app_server_protocol::McpServerToolCallParams {
+                thread_id: thread_id.to_string(), server: "codex_tui".into(), environment_id: None,
+                tool: "read_thread".into(),
+                arguments: Some(serde_json::json!({"threadId": thread_id.to_string(), "turnLimit": 1, "includeOutputs": false})),
+                meta: None,
+            },
+        }
+    ).await?;
+    let diagnostic = response
+        .content
+        .iter()
+        .filter_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // These are owned fixture errors; redact UUID capabilities even here.
+    let uuid = regex_lite::Regex::new(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    )?;
+    let diagnostic = uuid.replace_all(&diagnostic, "<uuid>");
+    let diagnostic: String = diagnostic.chars().take(1024).collect();
+    assert_eq!(
+        replacement.call_count(),
+        1,
+        "replacement route: {diagnostic}"
+    );
+    assert_ne!(
+        response.is_error,
+        Some(true),
+        "native MCP read: {diagnostic}"
+    );
+    let text = response
+        .content
+        .iter()
+        .find_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        .expect("native task read content");
+    let read: serde_json::Value = serde_json::from_str(text)?;
+    assert_eq!(read["thread"]["id"], thread_id.to_string());
+    assert!(
+        read["turns"]
+            .as_array()
+            .is_some_and(|turns| !turns.is_empty())
+    );
+    let still_same = server.thread_read(thread_id, false).await?;
+    assert_eq!(still_same.id, thread_id.to_string());
+    server.shutdown().await?;
+    Ok(())
+}
+
 async fn local_daemon_registers_approval_gated_mcp_tools_for_both_start_paths_scenario()
 -> Result<()> {
     let (mut app, events, _ops) = Box::pin(make_test_app_with_channels()).await;

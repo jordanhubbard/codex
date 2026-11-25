@@ -27,6 +27,71 @@ impl Drop for StartupProcesses {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shell_snapshot_replay_does_not_reload_bashrc_for_ssh() -> Result<()> {
+    let context = create_process_context(/*use_remote*/ false).await?;
+    let home = TempDir::new()?;
+    std::fs::write(
+        home.path().join(".bashrc"),
+        "printf x >> \"$HOME/captures\"\nprofile_helper() { printf restored; }\n",
+    )?;
+    let cwd = PathUri::from_host_native_path(home.path())?;
+    for index in 0..2 {
+        let started = context
+            .backend
+            .start(ExecParams {
+                metadata: Default::default(),
+                process_id: format!("ssh-snapshot-replay-{index}").into(),
+                argv: vec![
+                    "/bin/bash".to_string(),
+                    "-lc".to_string(),
+                    "profile_helper".to_string(),
+                ],
+                cwd: cwd.clone(),
+                // Force Bash's sshd startup path independently of the test runner's shell level.
+                env: HashMap::from([
+                    ("SSH_CLIENT".to_string(), "127.0.0.1 1 22".to_string()),
+                    ("SHLVL".to_string(), "0".to_string()),
+                ]),
+                env_policy: Some(ExecEnvPolicy {
+                    inherit: ShellEnvironmentPolicyInherit::None,
+                    ignore_default_excludes: false,
+                    exclude: Vec::new(),
+                    r#set: HashMap::from([
+                        (
+                            "HOME".to_string(),
+                            home.path().to_string_lossy().into_owned(),
+                        ),
+                        ("PATH".to_string(), "/usr/bin:/bin".to_string()),
+                    ]),
+                    include_only: Vec::new(),
+                }),
+                shell_snapshot: Some(ShellSnapshotRequest {
+                    scope_id: "ssh-replay".to_string(),
+                    shell: ShellInfo {
+                        name: "bash".to_string(),
+                        path: "/bin/bash".to_string(),
+                    },
+                }),
+                tty: false,
+                pipe_stdin: false,
+                arg0: None,
+                sandbox: None,
+                enforce_managed_network: false,
+                managed_network: None,
+                network_proxy: None,
+            })
+            .await?;
+        assert_eq!(
+            collect_process_output_from_events(started.process).await?,
+            ("restored".to_string(), String::new(), Some(0), true)
+        );
+    }
+    assert_eq!(std::fs::read_to_string(home.path().join("captures"))?, "x");
+    Ok(())
+}
+
 #[test_case("bash"; "bash")]
 #[cfg_attr(target_os = "macos", test_case("zsh"; "zsh"))]
 #[tokio::test]

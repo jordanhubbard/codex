@@ -6,6 +6,19 @@ use tokio::io::AsyncWriteExt;
 
 use super::*;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn same_user_peer_is_verified_on_both_ends_of_an_actual_socket() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("peer.sock");
+    let mut listener = UnixListener::bind(&path).await.unwrap();
+    let (client, accepted) = tokio::join!(UnixStream::connect(&path), listener.accept());
+    let client = client.unwrap();
+    let accepted = accepted.unwrap();
+    client.ensure_same_user_peer().unwrap();
+    accepted.ensure_same_user_peer().unwrap();
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn private_directory_rejects_volume_roots() {

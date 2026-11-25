@@ -210,6 +210,7 @@ mod resize_reflow_cap;
 mod resume_permissions;
 mod resume_picker;
 mod screen_reader;
+mod selection_observer;
 mod service_tier_resolution;
 mod session_archive_commands;
 mod session_lock;
@@ -1124,8 +1125,9 @@ pub async fn run_main(
     loader_overrides: LoaderOverrides,
     explicit_remote_endpoint: Option<RemoteAppServerEndpoint>,
 ) -> std::io::Result<AppExitInfo> {
+    selection_observer::initialize(cli.selection_observer_fd)?;
     system_motion::initialize().await;
-    startup_recovery::scope(async move {
+    let result = startup_recovery::scope(async move {
         // Startup retains a large future for the whole session. Keep it off callers' stacks,
         // which also need room to construct a replacement chat widget on `/new`.
         match boxed_future!(startup_orchestration::run_main_inner(
@@ -1156,7 +1158,9 @@ pub async fn run_main(
             result => result,
         }
     })
-    .await
+    .await;
+    selection_observer::publish(None);
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

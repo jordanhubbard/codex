@@ -347,9 +347,12 @@ mod tests {
 
     #[test]
     fn kitty_local_file_pet_image_uses_file_reference_without_inline_payload() {
+        use base64::Engine as _;
+
         let dir = tempfile::tempdir().unwrap();
         let frame = dir.path().join("frame.png");
         std::fs::write(&frame, b"png").unwrap();
+        let expected_frame = frame.canonicalize().unwrap();
         let request = AmbientPetDraw {
             frame,
             protocol: ImageProtocol::KittyLocalFile,
@@ -369,8 +372,15 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("a=d,d=I,i=49374,q=2;"));
         assert!(output.contains("\x1b[4;3H"));
-        assert!(output.contains("a=T,t=f,f=100,c=4,r=2,q=2,i=49374,C=1;"));
-        assert!(!output.contains("cG5n"));
+        let (_, payload) = output
+            .split_once("a=T,t=f,f=100,c=4,r=2,q=2,i=49374,C=1;")
+            .expect("Kitty file-reference command");
+        // Encoded filenames can contain the image bytes' base64 substring too.
+        let payload = payload.split('\x1b').next().unwrap();
+        let path = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .unwrap();
+        assert_eq!(path, expected_frame.to_string_lossy().as_bytes());
         assert!(output.contains("\x1b8"));
     }
 

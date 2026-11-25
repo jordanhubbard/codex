@@ -280,11 +280,11 @@ impl ShellSnapshotCache {
         if purpose == CapturePurpose::Prewarm {
             return Ok(None);
         }
-        let Some((flag, script, env)) = prepared.shell_snapshot_replay_mut(&params.argv) else {
-            return Ok(None);
-        };
         let Ok(snapshot) = snapshot else {
-            if let Some(proxy) = proxy {
+            if let Some(proxy) = proxy
+                && let Some((_, script, env)) =
+                    prepared.shell_snapshot_replay_mut(&params.argv, &[])
+            {
                 credentials::restore_fallback(script, env, proxy);
             }
             telemetry.shell_snapshot_command(wait, availability, "fallback");
@@ -310,7 +310,10 @@ impl ShellSnapshotCache {
                         "cannot prepare shell snapshot transport; using normal startup"
                     );
                     telemetry.shell_snapshot_command(wait, availability, "fallback");
-                    if let Some(proxy) = proxy {
+                    if let Some(proxy) = proxy
+                        && let Some((_, script, env)) =
+                            prepared.shell_snapshot_replay_mut(&params.argv, &[])
+                    {
                         credentials::restore_fallback(script, env, proxy);
                     }
                     return Ok(None);
@@ -318,6 +321,19 @@ impl ShellSnapshotCache {
             }
         } else {
             None
+        };
+
+        // Privileged mode suppresses BASH_ENV but Bash still reads .bashrc for sshd or
+        // socket stdin. Suppress that automatic startup only after replay is available.
+        let shell_options: &[&str] = if shell_type == ShellType::Bash {
+            &["--norc"]
+        } else {
+            &[]
+        };
+        let Some((flag, script, env)) =
+            prepared.shell_snapshot_replay_mut(&params.argv, shell_options)
+        else {
+            return Ok(None);
         };
 
         let request_overrides = params

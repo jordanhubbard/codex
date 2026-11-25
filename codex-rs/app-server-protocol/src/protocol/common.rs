@@ -1362,6 +1362,13 @@ client_request_definitions! {
         response: v2::McpServerRefreshResponse,
     },
 
+    #[experimental("thread/tuiMcp/rebind")]
+    ThreadTuiMcpRebind => "thread/tuiMcp/rebind" {
+        params: v2::ThreadTuiMcpRebindParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadTuiMcpRebindResponse,
+    },
+
     McpServerStatusList => "mcpServerStatus/list" {
         params: v2::ListMcpServerStatusParams,
         serialization: global("mcp-registry"),

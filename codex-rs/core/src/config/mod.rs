@@ -202,6 +202,7 @@ pub(crate) use runtime_refresh::RuntimeConfigRefresh;
 #[cfg(test)]
 mod schema;
 mod token_budget_startup;
+mod tui_mcp_handoff;
 mod windows_sandbox_config;
 pub use auth_keyring::bootstrap_auth_config;
 pub use auth_keyring::resolve_bootstrap_auth_keyring_backend_kind;

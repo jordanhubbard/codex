@@ -361,11 +361,6 @@ fn create_bwrap_flags(
     if options.network_mode.should_unshare_network() {
         args.push("--unshare-net".to_string());
     }
-    // Mount a fresh /proc unless the caller explicitly disables it.
-    if options.mount_proc {
-        args.push("--proc".to_string());
-        args.push("/proc".to_string());
-    }
     if normalized_command_cwd.as_path() != command_cwd {
         // Bubblewrap otherwise inherits the helper's logical cwd, which can be
         // a symlink alias that disappears once the sandbox only mounts
@@ -571,6 +566,12 @@ fn create_filesystem_args(
         preserved_files: Vec::new(),
         synthetic_mount_targets: Vec::new(),
     };
+    // Install procfs before policy masks, so it cannot reopen a denied proc path.
+    if options.mount_proc {
+        bwrap_args
+            .args
+            .extend(["--proc".to_string(), "/proc".to_string()]);
+    }
     let mut allowed_write_paths = Vec::with_capacity(writable_roots.len());
     for writable_root in &writable_roots {
         let root = writable_root.root.as_path();
@@ -640,6 +641,12 @@ fn create_filesystem_args(
                     "/dev/shm".to_string(),
                     "/dev/shm".to_string(),
                 ]);
+            }
+            if options.mount_proc && Path::new("/proc").starts_with(mount_root) {
+                // A broader bind replaced procfs; restore it before this root's carveouts.
+                bwrap_args
+                    .args
+                    .extend(["--proc".to_string(), "/proc".to_string()]);
             }
             append_daemon_socket_masks(&mut bwrap_args.args, mount_root, &daemon_directories)?;
         }
@@ -1243,6 +1250,17 @@ fn append_existing_unreadable_path_args(
     allowed_write_paths: &[PathBuf],
 ) -> Result<()> {
     if unreadable_root.is_dir() {
+        // The minimal device tree uses this absolute alias. Bubblewrap sets mounts up
+        // below /newroot, where following the alias would escape that prefix. Keep
+        // proc's dynamic `self` component instead of resolving it to the host PID.
+        let mount_root = if unreadable_root == Path::new("/dev/fd")
+            && fs::read_link(unreadable_root)
+                .is_ok_and(|target| target == Path::new("/proc/self/fd"))
+        {
+            Path::new("/proc/self/fd")
+        } else {
+            unreadable_root
+        };
         let mut writable_descendants: Vec<&Path> = allowed_write_paths
             .iter()
             .map(PathBuf::as_path)
@@ -1259,7 +1277,7 @@ fn append_existing_unreadable_path_args(
             "111".to_string()
         });
         bwrap_args.args.push("--tmpfs".to_string());
-        bwrap_args.args.push(path_to_string(unreadable_root));
+        bwrap_args.args.push(path_to_string(mount_root));
         // Recreate any writable descendants inside the tmpfs before remounting
         // the denied parent read-only. Otherwise bubblewrap cannot mkdir the
         // nested mount targets after the parent has been frozen.
@@ -1272,7 +1290,7 @@ fn append_existing_unreadable_path_args(
             );
         }
         bwrap_args.args.push("--remount-ro".to_string());
-        bwrap_args.args.push(path_to_string(unreadable_root));
+        bwrap_args.args.push(path_to_string(mount_root));
         return Ok(());
     }
 

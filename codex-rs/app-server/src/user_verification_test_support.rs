@@ -179,7 +179,9 @@ impl Harness {
                 ConnectionOrigin::Stdio | ConnectionOrigin::RemoteControl => {
                     AppServerRpcTransport::Stdio
                 }
-                ConnectionOrigin::WebSocket => AppServerRpcTransport::Websocket,
+                ConnectionOrigin::LocalSocket | ConnectionOrigin::WebSocket => {
+                    AppServerRpcTransport::Websocket
+                }
             },
             remote_control_handle: None,
             plugin_startup_tasks: None,
@@ -194,9 +196,11 @@ impl Harness {
             messages,
             home,
             transport: match origin {
-                ConnectionOrigin::WebSocket => AppServerTransport::WebSocket {
-                    bind_address: "127.0.0.1:0".parse()?,
-                },
+                ConnectionOrigin::LocalSocket | ConnectionOrigin::WebSocket => {
+                    AppServerTransport::WebSocket {
+                        bind_address: "127.0.0.1:0".parse()?,
+                    }
+                }
                 // Remote control can share a process whose primary listener is stdio.
                 // Keeping that case tests that authorization uses the connection's origin.
                 ConnectionOrigin::Stdio
@@ -284,4 +288,27 @@ pub(super) fn write_auth(home: &std::path::Path, token: &str) -> Result<()> {
             .chatgpt_account_id("account-1"),
         AuthCredentialsStoreMode::File,
     )
+}
+
+// The full dispatcher has large debug-build futures. Match the app-server
+// tracing fixtures' dedicated 8 MiB test stack, constructing the future there.
+// This changes neither production worker stacks nor any security assertion.
+pub(super) fn run_dispatcher_scenario<F, Fut>(name: &str, scenario: F) -> Result<()>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let worker = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || -> Result<()> {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(Box::pin(scenario()))
+        })?;
+    match worker.join() {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }
