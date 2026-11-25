@@ -53,18 +53,27 @@ impl ThreadLifecycleContributor<Config> for PauseNextThreadStart {
 fn connection_events_follow_the_active_turn_environment_selection() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
+    eprintln!("environment-selection-stage runtime-build");
     let scheduler_idle = Arc::new(Notify::new());
     let notifier = Arc::clone(&scheduler_idle);
-    tokio::runtime::Builder::new_multi_thread()
+    let result = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
         .on_thread_park(move || notifier.notify_waiters())
         .build()?
-        .block_on(check_connection_events_for_active_selection(scheduler_idle))
+        .block_on(check_connection_events_for_active_selection(scheduler_idle));
+    eprintln!("environment-selection-stage runtime-dropped");
+    result
 }
 
 async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify>) -> Result<()> {
+    let started = std::time::Instant::now();
+    let stage = |name: &str| {
+        eprintln!("environment-selection-stage {name} {:?}", started.elapsed());
+    };
+    stage("async-entered");
     let server = start_mock_server().await;
+    stage("model-server-ready");
     mount_sse_sequence(
         &server,
         vec![
@@ -88,10 +97,12 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         })
         .build_with_auto_env(&server)
         .await?;
+    stage("test-built");
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
     let resume_listener = TcpListener::from_std(listener.try_clone()?)?;
     let listener = TcpListener::from_std(listener)?;
+    stage("both-listeners-registered");
     let remote_id = "watched";
     test.thread_manager
         .environment_manager()
@@ -111,9 +122,13 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         environments: Some(vec![primary.clone(), remote.clone()]),
         ..StartThreadOptions::new(test.config.clone())
     };
+    stage("control-starting");
     let control = test.thread_manager.start_thread(options()).await?.thread;
+    stage("control-started");
     let thread = test.thread_manager.start_thread(options()).await?.thread;
+    stage("thread-started");
     let turn = start_paused_turn(&thread).await?;
+    stage("first-turn-paused");
     apply_turn_settings(
         &thread,
         &turn.turn_id,
@@ -123,6 +138,8 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         },
     )
     .await?;
+
+    stage("remote-deselected");
 
     // Connect while the remote is deselected on one thread and another is still starting.
     startup_barrier.pause_next.store(true, Ordering::SeqCst);
@@ -135,6 +152,7 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
             anyhow::bail!("thread startup completed before the executor connected");
         }
     }
+    stage("startup-barrier-entered");
     let (ready, start) = oneshot::channel();
     let (disconnect, stop) = oneshot::channel();
     ready.send(()).expect("exec-server start receiver is alive");
@@ -151,25 +169,34 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         );
     };
     let assert_no_connection_events = async |thread: &CodexThread, message: &str| -> Result<()> {
+        stage("waiting-for-sole-worker-park");
         // Register on the sole worker so the next park follows all runnable listeners.
         let idle = Arc::clone(&scheduler_idle);
         tokio::spawn(async move { idle.notified().await }).await?;
+        stage("sole-worker-park-observed");
         for _ in 0..thread.queued_event_count() {
             let event = thread.next_event().await?.msg;
             assert!(!connection_event(&event), "{message} {event:?}");
         }
         Ok(())
     };
+    stage("waiting-for-control-connection");
     wait_for_connection(&control).await;
+    stage("control-connected");
     assert_no_connection_events(&thread, "deselected executor emitted").await?;
+    stage("deselected-events-checked");
     startup_barrier.release.notify_one();
     let started = starting
         .await
         .expect("SessionConfigured must precede executor connection events")
         .thread;
+    stage("blocked-startup-completed");
     assert_no_connection_events(&started, "startup replayed").await?;
+    stage("startup-replay-checked");
 
+    stage("answering-paused-turn");
     answer_paused_turn(&thread, &turn.turn_id).await?;
+    stage("paused-turn-answered");
     let end_of_turn =
         |event: &EventMsg| connection_event(event) || matches!(event, EventMsg::TurnComplete(_));
     let event = wait_for_event(&thread, end_of_turn).await;
@@ -177,6 +204,8 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         matches!(event, EventMsg::TurnComplete(_)),
         "deselected executor emitted {event:?}"
     );
+
+    stage("first-turn-completed");
 
     // The next turn inherits the configured selection. A resumed transport should notify it once.
     thread
@@ -192,18 +221,26 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
     let EventMsg::RequestUserInput(turn) = event else {
         anyhow::bail!("reselecting an already connected executor replayed {event:?}");
     };
+    stage("disconnect-requested");
     disconnect
         .send(())
         .expect("exec-server should be connected when the test requests a disconnect");
+    stage("joining-initial-executor");
     executor.await?;
+    stage("initial-executor-joined");
     let (disconnect, stop) = oneshot::channel();
+    stage("spawning-resumed-executor");
     let resumed_executor = tokio::spawn(serve_resumed_environment_with_agents_md(
         resume_listener,
         "",
         stop,
     ));
+    stage("waiting-for-control-connection");
     wait_for_connection(&control).await;
+    stage("control-connected");
+    stage("waiting-for-thread-reconnection");
     wait_for_connection(&thread).await;
+    stage("thread-reconnected");
     assert_no_connection_events(&thread, "duplicate connection event").await?;
 
     // A resumed transport must also serve the filesystem work needed by the next sampling step.
@@ -214,6 +251,7 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         .expect("registered remote environment");
     let file_system = environment.get_filesystem();
     let probe = PathUri::parse("file:///resumed-environment-probe/AGENTS.md")?;
+    stage("probing-resumed-filesystem");
     let metadata = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         file_system.get_metadata(&probe, Default::default(), /*sandbox*/ None),
@@ -221,13 +259,19 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
     .await
     .expect("resumed executor must answer filesystem requests")?;
     assert!(metadata.is_file);
+    stage("resumed-filesystem-checked");
 
+    stage("answering-paused-turn");
     answer_paused_turn(&thread, &turn.turn_id).await?;
+    stage("paused-turn-answered");
     wait_for_event(&thread, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    stage("disconnect-requested");
     disconnect
         .send(())
         .expect("resumed exec-server should stay connected through turn completion");
+    stage("joining-resumed-executor");
     resumed_executor.await?;
+    stage("resumed-executor-joined");
     Ok(())
 }
 
