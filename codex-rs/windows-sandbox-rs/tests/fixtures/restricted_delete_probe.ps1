@@ -33,7 +33,7 @@ public static class TokenMatrix742 {
    Directory.SetAccessControl(parent,acl);
    string child=Path.Combine(parent,"outside.txt");File.WriteAllText(child,"outside");
    Need(ImpersonateLoggedOnUser(token));bool deleted;int err;
-   try {deleted=DeleteFile(child);err=Marshal.GetLastWin32Error();} finally {Need(RevertToSelf());}
+   try {deleted=DeleteFile(child);err=deleted?0:Marshal.GetLastWin32Error();} finally {Need(RevertToSelf());}
    result+="actual DeleteFile parent_user_mask=0x"+mask.ToString("x")+" deleted="+deleted+" error="+err+" remains="+File.Exists(child)+"\n";
   }} finally {Directory.Delete(root,true);}return result;
  }
@@ -69,7 +69,7 @@ public static class TokenMatrix742 {
   var sd=new RawSecurityDescriptor("O:"+sid+"G:SYD:(A;;FA;;;"+sid+")");byte[] bytes=new byte[sd.BinaryLength];sd.GetBinaryForm(bytes,0);
   var rs=new SecurityIdentifier("S-1-5-21-111111111-222222222-333333333-4444");byte[] sb=new byte[rs.BinaryLength];rs.GetBinaryForm(sb,0);IntPtr ptr=Marshal.AllocHGlobal(sb.Length);Marshal.Copy(sb,0,ptr,sb.Length);
   var result="synthetic descriptor: current user FILE_ALL_ACCESS only; no restricting SID grant\n";
-  try{foreach(uint flags in new uint[]{5,13}){IntPtr rt;Need(CreateRestrictedToken(original,flags,0,IntPtr.Zero,0,IntPtr.Zero,1,new SA[]{new SA{Sid=ptr,Attributes=0}},out rt));try{if(flags==13)SetLow(rt);IntPtr it;Need(DuplicateToken(rt,2,out it));try{if(flags==13){result+=DeleteProbe(it);result+=WorkspaceProbe(it);}foreach(uint access in new uint[]{1,2,0x40,0x10000,0x40000,0x80000}){GM gm=new GM{Read=0x120089,Write=0x120116,Execute=0x1200a0,All=0x1f01ff};uint n=4096;IntPtr priv=Marshal.AllocHGlobal((int)n);try{uint grant;bool status;Need(AccessCheck(bytes,it,access,ref gm,priv,ref n,out grant,out status));result+="flags="+flags+" access=0x"+access.ToString("x")+" allowed="+status+" granted=0x"+grant.ToString("x")+"\n";}finally{Marshal.FreeHGlobal(priv);}}}finally{CloseHandle(it);}}finally{CloseHandle(rt);}}}finally{Marshal.FreeHGlobal(ptr);CloseHandle(original);}return result;
+  try{foreach(int mode in new int[]{0,1,2}){uint flags=mode==0?5u:13u;IntPtr rt;Need(CreateRestrictedToken(original,flags,0,IntPtr.Zero,0,IntPtr.Zero,1,new SA[]{new SA{Sid=ptr,Attributes=0}},out rt));try{if(mode==2)SetLow(rt);result+="low_integrity="+(mode==2)+"\n";IntPtr it;Need(DuplicateToken(rt,2,out it));try{if(mode>0)result+=DeleteProbe(it);if(mode==2)result+=WorkspaceProbe(it);foreach(uint access in new uint[]{1,2,0x40,0x10000,0x40000,0x80000}){GM gm=new GM{Read=0x120089,Write=0x120116,Execute=0x1200a0,All=0x1f01ff};uint n=4096;IntPtr priv=Marshal.AllocHGlobal((int)n);try{uint grant;bool status;Need(AccessCheck(bytes,it,access,ref gm,priv,ref n,out grant,out status));result+="flags="+flags+" access=0x"+access.ToString("x")+" allowed="+status+" granted=0x"+grant.ToString("x")+"\n";}finally{Marshal.FreeHGlobal(priv);}}}finally{CloseHandle(it);}}finally{CloseHandle(rt);}}}finally{Marshal.FreeHGlobal(ptr);CloseHandle(original);}return result;
  }
 }
 '@
