@@ -1767,7 +1767,9 @@ async fn realtime_conversation_stop_emits_closed_notification(
 ) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let responses_server = MockServer::start().await;
+    // This test counts every request. A pooled server can still receive late
+    // analytics from an earlier app-server fixture after being reassigned here.
+    let responses_server = MockServer::builder().start().await;
     let (response_tx, response_rx) = mpsc::channel();
     Mock::given(method("POST"))
         .and(path_regex(".*/responses$"))
