@@ -430,7 +430,7 @@ fn manual_update_daemon(home: &TempDir) -> (Daemon, String) {
     std::fs::create_dir_all(bin.parent().expect("binary parent")).expect("release directory");
     codex_utils_cargo_bin::write_executable(
         &bin,
-        "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo codex 1.0.0; else exec sleep 30; fi\n",
+        "#!/bin/sh\nif [ \"$1\" = '--version' ]; then echo codex 1.0.0; elif [ \"$3\" = --help ]; then exit 0; else exec sleep 30; fi\n",
     )
     .expect("managed binary");
     std::os::unix::fs::symlink(format!("releases/{release}"), standalone.join("current"))
@@ -1070,7 +1070,7 @@ async fn check_manual_update_restart(package_directory: &str) {
         )
     } else {
         format!(
-            r#"printf '#!/bin/sh\nif [ "$1" = --version ]; then echo codex 1.1.0; else exec sleep 30; fi\n' > '{root}/releases/{next}/bin/codex'"#,
+            r#"printf '#!/bin/sh\nif [ "$1" = --version ]; then echo codex 1.1.0; elif [ "$3" = --help ]; then exit 0; else exec sleep 30; fi\n' > '{root}/releases/{next}/bin/codex'"#,
             root = standalone.display()
         )
     };

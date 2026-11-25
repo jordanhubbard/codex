@@ -1536,8 +1536,11 @@ mod tests {
         tokio::fs::create_dir_all(local_bin.parent().expect("bin parent"))
             .await
             .expect("local bin directory");
-        codex_utils_cargo_bin::write_executable(&local_bin, "#!/bin/sh\nexec sleep 30\n")
-            .expect("local bin");
+        codex_utils_cargo_bin::write_executable(
+            &local_bin,
+            "#!/bin/sh\nif [ \"$3\" = --help ]; then exit 0; fi\nexec sleep 30\n",
+        )
+        .expect("local bin");
         std::os::unix::fs::symlink("local-main", standalone.join("current"))
             .expect("current local build");
         let state = home.path().join("app-server-daemon");
