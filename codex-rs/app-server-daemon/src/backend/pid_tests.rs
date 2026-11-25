@@ -292,8 +292,16 @@ async fn legacy_launch_clears_recovery_best_effort() {
         } else {
             std::fs::write(&recovery_file, "{}").expect("pending snapshot");
         }
+        let binary = home.path().join("legacy-codex");
+        // Fail the later detached spawn without starting a daemon. The probe
+        // must explicitly reject this flag before legacy recovery is cleared.
+        codex_utils_cargo_bin::write_executable(
+            &binary,
+            "#!/bin/sh\n/bin/rm -f \"$0\"\nprintf \"%s\\n\" \"error: unexpected argument '--managed-daemon' found\" >&2\nexit 2\n",
+        )
+        .expect("explicit legacy fixture");
         let backend = PidBackend::new(
-            home.path().join("missing-codex"),
+            binary,
             state_dir.join("app-server.pid"),
             /*remote_control_enabled*/ false,
         );
@@ -353,8 +361,14 @@ async fn pid_record_captures_the_resolved_launch_binary() {
     let original = temp.path().join("original-codex");
     let replacement = temp.path().join("replacement-codex");
     for (path, bytes) in [
-        (&original, "#!/bin/sh\nexec sleep 30\n"),
-        (&replacement, "#!/bin/sh\n# replacement\nexec sleep 30\n"),
+        (
+            &original,
+            "#!/bin/sh\nif [ \"$3\" = --help ]; then exit 0; fi\nexec sleep 30\n",
+        ),
+        (
+            &replacement,
+            "#!/bin/sh\n# replacement\nif [ \"$3\" = --help ]; then exit 0; fi\nexec sleep 30\n",
+        ),
     ] {
         codex_utils_cargo_bin::write_executable(path, bytes).expect("binary");
     }
@@ -836,7 +850,7 @@ async fn managed_children_launch_in_workdir_without_changing_private_state_direc
     tokio::fs::write(
         &codex_bin,
         "@echo off\r\n\
-         if \"%3\"==\"--help\" exit /b 1\r\n\
+         if \"%3\"==\"--help\" exit /b 0\r\n\
          echo ready > launched.cwd\r\n\
          if defined CODEX_DAEMON_SHUTDOWN_FILE (for %%F in (\"%CODEX_DAEMON_SHUTDOWN_FILE%\") do type nul > \"%%~dpnF.ready\")\r\n\
          for /l %%i in (1,1,10000000) do @rem\r\n",
@@ -1171,4 +1185,104 @@ async fn stderr_handoff_appends_after_truncation_without_gaps() -> anyhow::Resul
         b"successor startup failure\npredecessor handoff complete\n"
     );
     Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn missing_managed_probe_preserves_recovery() {
+    let home = TempDir::new().expect("temp dir");
+    let state_dir = home.path().join("app-server-daemon");
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let recovery_file = codex_app_server_transport::daemon_recovery_file_path(home.path());
+    let checkpoint = br#"["checkpointed-thread-755"]"#;
+    std::fs::write(&recovery_file, checkpoint).expect("pending recovery");
+    let backend = PidBackend::new(
+        home.path().join("missing-codex"),
+        state_dir.join("daemon.pid"),
+        /*remote_control_enabled*/ false,
+    );
+
+    backend.start().await.expect_err("missing probe executable");
+
+    assert_eq!(
+        std::fs::read(&recovery_file).expect("probe failure must keep recovery"),
+        checkpoint,
+    );
+    assert!(
+        !backend.pid_file.exists(),
+        "failed reservation must be released"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timed_out_managed_probe_preserves_recovery_without_legacy_launch() {
+    let home = TempDir::new().expect("temp dir");
+    let state_dir = home.path().join("app-server-daemon");
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let recovery_file = codex_app_server_transport::daemon_recovery_file_path(home.path());
+    let checkpoint = br#"["checkpointed-thread-755"]"#;
+    std::fs::write(&recovery_file, checkpoint).expect("pending recovery");
+    let binary = home.path().join("codex");
+    codex_utils_cargo_bin::write_executable(
+        &binary,
+        "#!/bin/sh\nif [ \"$2\" = --managed-daemon ] && [ \"$3\" = --help ]; then exec sleep 6; fi\nprintf launched > \"$0.launched\"\nexit 17\n",
+    )
+    .expect("slow capability fixture");
+    let backend = PidBackend::new(
+        binary.clone(),
+        state_dir.join("daemon.pid"),
+        /*remote_control_enabled*/ false,
+    );
+
+    let result = backend.start().await;
+
+    assert!(
+        !binary.with_extension("launched").exists(),
+        "unknown support must not launch legacy mode"
+    );
+    assert!(result.is_err(), "unknown support must fail the launch");
+    assert_eq!(
+        std::fs::read(&recovery_file).expect("probe timeout must keep recovery"),
+        checkpoint,
+    );
+    assert!(
+        !backend.pid_file.exists(),
+        "failed reservation must be released"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_managed_probe_preserves_recovery() {
+    for diagnostic in [
+        "transient loader failure",
+        "error: unexpected argument '--different-flag' found; usage: --managed-daemon",
+    ] {
+        let home = TempDir::new().expect("temp dir");
+        let state_dir = home.path().join("app-server-daemon");
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        let recovery_file = codex_app_server_transport::daemon_recovery_file_path(home.path());
+        let checkpoint = br#"["checkpointed-thread-755"]"#;
+        std::fs::write(&recovery_file, checkpoint).expect("pending recovery");
+        let binary = home.path().join("codex");
+        codex_utils_cargo_bin::write_executable(
+            &binary,
+            &format!("#!/bin/sh\nprintf \"%s\\n\" \"{diagnostic}\" >&2\nexit 2\n"),
+        )
+        .expect("failed capability fixture");
+        let backend = PidBackend::new(
+            binary,
+            state_dir.join("daemon.pid"),
+            /*remote_control_enabled*/ false,
+        );
+
+        backend.start().await.expect_err("inconclusive failure");
+
+        assert_eq!(
+            std::fs::read(&recovery_file).expect("inconclusive failure must keep recovery"),
+            checkpoint,
+        );
+        assert!(!backend.pid_file.exists());
+    }
 }
