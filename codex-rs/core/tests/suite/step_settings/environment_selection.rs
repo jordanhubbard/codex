@@ -13,6 +13,7 @@ use codex_protocol::models::PermissionProfileSnapshot;
 use codex_protocol::protocol::EnvironmentConfigState;
 use codex_protocol::protocol::TurnEnvironmentRequests;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_utils_path_uri::PathUri;
 use core_test_support::submit_thread_settings;
 use core_test_support::test_codex::environment_config_for_selection;
 use pretty_assertions::assert_eq;
@@ -23,8 +24,8 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::sync::oneshot;
 
-use crate::suite::remote_env::accept_initialized_exec_server;
 use crate::suite::remote_env::serve_environment_with_agents_md;
+use crate::suite::remote_env::serve_resumed_environment_with_agents_md;
 
 /// Holds one startup after environment selection and before the thread publishes SessionConfigured.
 #[derive(Default)]
@@ -195,12 +196,38 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         .send(())
         .expect("exec-server should be connected when the test requests a disconnect");
     executor.await?;
-    let _resumed_socket = accept_initialized_exec_server(resume_listener).await;
+    let (disconnect, stop) = oneshot::channel();
+    let resumed_executor = tokio::spawn(serve_resumed_environment_with_agents_md(
+        resume_listener,
+        "",
+        stop,
+    ));
     wait_for_connection(&control).await;
     wait_for_connection(&thread).await;
     assert_no_connection_events(&thread, "duplicate connection event").await?;
+
+    // A resumed transport must also serve the filesystem work needed by the next sampling step.
+    let environment = test
+        .thread_manager
+        .environment_manager()
+        .get_environment(remote_id)
+        .expect("registered remote environment");
+    let file_system = environment.get_filesystem();
+    let probe = PathUri::parse("file:///resumed-environment-probe/AGENTS.md")?;
+    let metadata = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        file_system.get_metadata(&probe, Default::default(), /*sandbox*/ None),
+    )
+    .await
+    .expect("resumed executor must answer filesystem requests")?;
+    assert!(metadata.is_file);
+
     answer_paused_turn(&thread, &turn.turn_id).await?;
     wait_for_event(&thread, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    disconnect
+        .send(())
+        .expect("resumed exec-server should stay connected through turn completion");
+    resumed_executor.await?;
     Ok(())
 }
 

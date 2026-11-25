@@ -1505,6 +1505,16 @@ async fn serve_environment_with_instruction_files(
     serve_instruction_file_requests(websocket, contents, skill, shutdown).await
 }
 
+/// Keep serving filesystem requests after a resumed transport completes initialization.
+pub(super) async fn serve_resumed_environment_with_agents_md(
+    listener: TcpListener,
+    contents: &str,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> usize {
+    let websocket = accept_initialized_exec_server(listener).await;
+    serve_instruction_file_requests(websocket, contents, /*skill*/ None, shutdown).await
+}
+
 async fn serve_instruction_file_requests(
     mut websocket: WebSocketStream<TcpStream>,
     contents: &str,
