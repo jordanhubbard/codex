@@ -2006,14 +2006,28 @@ async fn realtime_conversation_stop_emits_closed_notification(
             read_notification::<TurnCompletedNotification>(&mut mcp, "turn/completed").await?;
         assert_eq!(Some(completed.turn.id), running_turn_id);
     }
-    assert_eq!(
-        responses_server
-            .received_requests()
-            .await
-            .expect("request recording is enabled")
-            .len(),
-        usize::from(running)
-    );
+    let observed_requests = responses_server
+        .received_requests()
+        .await
+        .expect("request recording is enabled");
+    let summaries = observed_requests
+        .iter()
+        .map(|request| {
+            let body = serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null);
+            json!({
+                "method": request.method.as_str(),
+                "path": request.url.path(),
+                "generate": body.get("generate"),
+                "prefill_only": body.get("prefill_only"),
+                "stream": body.get("stream"),
+                "input_items": body.get("input").and_then(Value::as_array).map(Vec::len),
+                "previous_response": body.get("previous_response_id").is_some(),
+                "keys": body.as_object().map(|object| object.keys().collect::<Vec<_>>()),
+            })
+        })
+        .collect::<Vec<_>>();
+    eprintln!("DIAGNOSTIC_REALTIME_REQUESTS {history_mode:?} running={running}: {summaries:?}");
+    assert_eq!(observed_requests.len(), usize::from(running));
 
     realtime_server.shutdown().await;
     Ok(())
