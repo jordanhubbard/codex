@@ -1569,6 +1569,28 @@ async fn opted_in_executor_provider_skips_host_discovery_but_injects_discovered_
     const EXECUTOR_SKILL_BODY: &str = "SELECTED_EXECUTOR_SKILL_REMAINS_AVAILABLE";
     const EXECUTOR_ROOT_ID: &str = "selected-capabilities";
 
+    fn emit_trace_context_diagnostic(stage: &str) {
+        if std::env::var_os("CODEX_DIAGNOSTIC_TRACE_CONTEXT").is_none() {
+            return;
+        }
+        let (no_subscriber, span_name) = tracing::dispatcher::get_default(|dispatcher| {
+            (
+                dispatcher.is::<tracing::subscriber::NoSubscriber>(),
+                dispatcher.current_span().metadata().map(|meta| meta.name()),
+            )
+        });
+        let thread_id = std::thread::current().id();
+        let static_max = tracing::level_filters::STATIC_MAX_LEVEL;
+        let global_max = tracing::level_filters::LevelFilter::current();
+        #[expect(
+            clippy::print_stderr,
+            reason = "opt-in diagnostics must not depend on the subscriber being investigated"
+        )]
+        eprintln!(
+            "CODEX_TRACE_CONTEXT stage={stage} thread={thread_id:?} static_max={static_max:?} global_max={global_max:?} no_subscriber={no_subscriber} span={span_name:?}"
+        );
+    }
+
     let buffer: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -1577,6 +1599,7 @@ async fn opted_in_executor_provider_skips_host_discovery_but_injects_discovered_
         .with_writer(MockWriter::new(buffer))
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
+    emit_trace_context_diagnostic("fixture.before_build");
 
     let server = responses::start_mock_server().await;
     let websocket_server = start_websocket_server(vec![vec![
@@ -1787,6 +1810,22 @@ async fn opted_in_executor_provider_skips_host_discovery_but_injects_discovered_
     websocket_server.shutdown().await;
 
     let logs = String::from_utf8(buffer.lock().unwrap().clone())?;
+    emit_trace_context_diagnostic("fixture.after_shutdown");
+    if std::env::var_os("CODEX_DIAGNOSTIC_TRACE_CONTEXT").is_some() {
+        let counts = [
+            "startup_prewarm",
+            "turn_context.build",
+            "capability_roots.snapshot_for_step",
+            "skills.executor.refresh_executor_catalog",
+            "skills_for_config",
+        ]
+        .map(|name| (name, logs.matches(name).count()));
+        #[expect(
+            clippy::print_stderr,
+            reason = "report span-name counts without exposing captured prompts or headers"
+        )]
+        eprintln!("CODEX_TRACE_CONTEXT stage=fixture.counts controls={counts:?}");
+    }
     for span in [
         "startup_prewarm",
         "turn_context.build",

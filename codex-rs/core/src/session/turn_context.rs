@@ -1334,6 +1334,24 @@ impl Session {
         build_mode: TurnContextBuildMode,
         git_enrichment_policy: GitEnrichmentPolicy,
     ) -> Arc<TurnContext> {
+        if std::env::var_os("CODEX_DIAGNOSTIC_TRACE_CONTEXT").is_some() {
+            let (no_subscriber, span_name) = tracing::dispatcher::get_default(|dispatcher| {
+                (
+                    dispatcher.is::<tracing::subscriber::NoSubscriber>(),
+                    dispatcher.current_span().metadata().map(|meta| meta.name()),
+                )
+            });
+            let thread_id = std::thread::current().id();
+            let static_max = tracing::level_filters::STATIC_MAX_LEVEL;
+            let global_max = tracing::level_filters::LevelFilter::current();
+            #[expect(
+                clippy::print_stderr,
+                reason = "opt-in diagnostics must not depend on the subscriber being investigated"
+            )]
+            eprintln!(
+                "CODEX_TRACE_CONTEXT stage=core.turn_context build_mode={build_mode:?} thread={thread_id:?} static_max={static_max:?} global_max={global_max:?} no_subscriber={no_subscriber} span={span_name:?}"
+            );
+        }
         let primary_turn_environment = turn_environments.primary();
         let mut per_turn_config = Self::build_per_turn_config(
             &session_configuration,
