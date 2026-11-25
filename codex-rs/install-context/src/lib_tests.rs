@@ -498,20 +498,32 @@ fn package_manager_method_overrides_take_precedence() {
 }
 
 #[test]
-fn brew_is_detected_on_macos_prefixes() {
-    let context = InstallContext::from_exe_with_codex_home(
-        /*is_macos*/ true,
-        /*current_exe*/ Some(Path::new("/opt/homebrew/bin/codex")),
-        /*method_override*/ None,
-        /*codex_home*/ None,
+fn brew_is_detected_on_macos_prefixes() -> std::io::Result<()> {
+    let fixture = tempfile::tempdir()?;
+    let fixture_name = format!(
+        "codex-install-context-test-{}",
+        fixture.path().file_name().unwrap().to_string_lossy()
     );
-    assert_eq!(
-        context,
-        InstallContext {
-            method: InstallMethod::Brew,
-            package_layout: None,
-        }
-    );
+    for prefix in ["/opt/homebrew", "/usr/local"] {
+        // An installed codex symlink may resolve to a real package layout. Keep this
+        // prefix-classification fixture in a unique absent subtree without writing there.
+        let exe_path = Path::new(prefix).join(&fixture_name).join("bin/codex");
+        assert!(!exe_path.exists());
+        let context = InstallContext::from_exe_with_codex_home(
+            /*is_macos*/ true,
+            /*current_exe*/ Some(&exe_path),
+            /*method_override*/ None,
+            /*codex_home*/ None,
+        );
+        assert_eq!(
+            context,
+            InstallContext {
+                method: InstallMethod::Brew,
+                package_layout: None,
+            }
+        );
+    }
+    Ok(())
 }
 
 #[path = "bundle_tests.rs"]
