@@ -1172,3 +1172,68 @@ async fn stderr_handoff_appends_after_truncation_without_gaps() -> anyhow::Resul
     );
     Ok(())
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn missing_managed_probe_preserves_recovery() {
+    let home = TempDir::new().expect("temp dir");
+    let state_dir = home.path().join("app-server-daemon");
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let recovery_file = codex_app_server_transport::daemon_recovery_file_path(home.path());
+    let checkpoint = br#"["checkpointed-thread-755"]"#;
+    std::fs::write(&recovery_file, checkpoint).expect("pending recovery");
+    let backend = PidBackend::new(
+        home.path().join("missing-codex"),
+        state_dir.join("daemon.pid"),
+        /*remote_control_enabled*/ false,
+    );
+
+    backend.start().await.expect_err("missing probe executable");
+
+    assert_eq!(
+        std::fs::read(&recovery_file).expect("probe failure must keep recovery"),
+        checkpoint,
+    );
+    assert!(
+        !backend.pid_file.exists(),
+        "failed reservation must be released"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timed_out_managed_probe_preserves_recovery_without_legacy_launch() {
+    let home = TempDir::new().expect("temp dir");
+    let state_dir = home.path().join("app-server-daemon");
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let recovery_file = codex_app_server_transport::daemon_recovery_file_path(home.path());
+    let checkpoint = br#"["checkpointed-thread-755"]"#;
+    std::fs::write(&recovery_file, checkpoint).expect("pending recovery");
+    let binary = home.path().join("codex");
+    codex_utils_cargo_bin::write_executable(
+        &binary,
+        "#!/bin/sh\nif [ \"$2\" = --managed-daemon ] && [ \"$3\" = --help ]; then exec sleep 6; fi\nprintf launched > \"$0.launched\"\nexit 17\n",
+    )
+    .expect("slow capability fixture");
+    let backend = PidBackend::new(
+        binary.clone(),
+        state_dir.join("daemon.pid"),
+        /*remote_control_enabled*/ false,
+    );
+
+    let result = backend.start().await;
+
+    assert!(
+        !binary.with_extension("launched").exists(),
+        "unknown support must not launch legacy mode"
+    );
+    assert!(result.is_err(), "unknown support must fail the launch");
+    assert_eq!(
+        std::fs::read(&recovery_file).expect("probe timeout must keep recovery"),
+        checkpoint,
+    );
+    assert!(
+        !backend.pid_file.exists(),
+        "failed reservation must be released"
+    );
+}
