@@ -2017,6 +2017,10 @@ async fn realtime_conversation_stop_emits_closed_notification(
             json!({
                 "method": request.method.as_str(),
                 "path": request.url.path(),
+                "model": body.get("model"),
+                "thread": body.pointer("/client_metadata/thread_id"),
+                "turn": body.pointer("/client_metadata/turn_id"),
+                "kind": body.pointer("/client_metadata/request_kind"),
                 "generate": body.get("generate"),
                 "prefill_only": body.get("prefill_only"),
                 "stream": body.get("stream"),
@@ -2026,7 +2030,10 @@ async fn realtime_conversation_stop_emits_closed_notification(
             })
         })
         .collect::<Vec<_>>();
-    eprintln!("DIAGNOSTIC_REALTIME_REQUESTS {history_mode:?} running={running}: {summaries:?}");
+    eprintln!(
+        "DIAGNOSTIC_REALTIME_REQUESTS {history_mode:?} running={running} thread={} turn={running_turn_id:?}: {summaries:?}",
+        thread_start.thread.id
+    );
     assert_eq!(observed_requests.len(), usize::from(running));
 
     realtime_server.shutdown().await;
