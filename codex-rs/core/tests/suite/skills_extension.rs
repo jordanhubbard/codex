@@ -128,6 +128,7 @@ use tokio::time::Instant;
 use toml::toml;
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_test::internal::MockWriter;
 use wiremock::MockServer;
 
@@ -1577,6 +1578,11 @@ async fn opted_in_executor_provider_skips_host_discovery_but_injects_discovered_
         .with_writer(MockWriter::new(buffer))
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
+    // Keep two dispatchers alive so callsite registration on a parallel
+    // thread without a subscriber still accounts for this scoped collector.
+    let _parallel_dispatch = tracing::Dispatch::new(
+        tracing_subscriber::registry().with(tracing_subscriber::filter::LevelFilter::OFF),
+    );
 
     let server = responses::start_mock_server().await;
     let websocket_server = start_websocket_server(vec![vec![
