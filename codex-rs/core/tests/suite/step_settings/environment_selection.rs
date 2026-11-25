@@ -159,6 +159,7 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         }
         Ok(())
     };
+    eprintln!("environment-selection checkpoint: initial control connection");
     wait_for_connection(&control).await;
     assert_no_connection_events(&thread, "deselected executor emitted").await?;
     startup_barrier.release.notify_one();
@@ -171,6 +172,7 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
     answer_paused_turn(&thread, &turn.turn_id).await?;
     let end_of_turn =
         |event: &EventMsg| connection_event(event) || matches!(event, EventMsg::TurnComplete(_));
+    eprintln!("environment-selection checkpoint: deselected turn completion");
     let event = wait_for_event(&thread, end_of_turn).await;
     assert!(
         matches!(event, EventMsg::TurnComplete(_)),
@@ -184,6 +186,7 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
             text_elements: Vec::new(),
         }]))
         .await?;
+    eprintln!("environment-selection checkpoint: configured turn request_user_input");
     let event = wait_for_event(&thread, |event| {
         connection_event(event) || matches!(event, EventMsg::RequestUserInput(_))
     })
@@ -195,11 +198,15 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         .send(())
         .expect("exec-server should be connected when the test requests a disconnect");
     executor.await?;
+    eprintln!("environment-selection checkpoint: resumed transport initialization");
     let _resumed_socket = accept_initialized_exec_server(resume_listener).await;
+    eprintln!("environment-selection checkpoint: resumed control connection");
     wait_for_connection(&control).await;
+    eprintln!("environment-selection checkpoint: resumed selected-thread connection");
     wait_for_connection(&thread).await;
     assert_no_connection_events(&thread, "duplicate connection event").await?;
     answer_paused_turn(&thread, &turn.turn_id).await?;
+    eprintln!("environment-selection checkpoint: restored turn completion");
     wait_for_event(&thread, |event| matches!(event, EventMsg::TurnComplete(_))).await;
     Ok(())
 }
