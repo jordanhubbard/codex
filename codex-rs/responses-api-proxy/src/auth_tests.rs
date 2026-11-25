@@ -252,6 +252,10 @@ fn oversized_exchange_never_becomes_a_cached_credential() {
         unreachable!()
     };
     assert!(state.lock().unwrap().cached.is_none());
+    // Close the rejected response's transport before waiting for the mock to
+    // finish writing the oversized body. Its current-thread runtime is idle
+    // after header() returns, so retaining it can leave the writer blocked.
+    drop(auth);
     worker.join().unwrap();
 }
 
