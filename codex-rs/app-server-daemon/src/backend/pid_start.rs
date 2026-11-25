@@ -14,6 +14,7 @@ use crate::telemetry::StartFailure;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
+use std::path::Path;
 use std::process::Stdio;
 use tokio::fs;
 use tokio::process::Command;
@@ -116,21 +117,23 @@ impl PidBackend {
         // Older or pinned managed binaries may predate this optional startup flag.
         let managed_app_server =
             matches!(self.command_kind, super::PidCommandKind::AppServer { .. });
-        if managed_app_server
-            && matches!(
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    Command::new(&codex_bin)
-                        .args(["app-server", "--managed-daemon", "--help"])
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .kill_on_drop(true)
-                        .status(),
-                ).await,
-                Ok(Ok(status)) if status.success()
-            )
-        {
+        let managed_daemon_supported = if managed_app_server {
+            match supports_managed_daemon(&codex_bin).await {
+                Ok(supported) => supported,
+                Err(error) => {
+                    if replacement.is_none() {
+                        let _ = fs::remove_file(&self.pid_file).await;
+                    }
+                    return Err(error).context(StartFailure::Spawn(format!(
+                        "failed to spawn detached app-server process using {}: could not determine managed-daemon support; saved recovery was retained",
+                        self.codex_bin.display()
+                    )));
+                }
+            }
+        } else {
+            false
+        };
+        if managed_daemon_supported {
             command.arg("--managed-daemon");
         } else if managed_app_server {
             let codex_home = self
@@ -320,4 +323,35 @@ impl PidBackend {
         drop(reservation_lock);
         Ok(Some(pid))
     }
+}
+
+/// Only an explicit unknown-argument response establishes legacy compatibility.
+/// A slow or failed probe must not discard a pending recovery snapshot.
+async fn supports_managed_daemon(codex_bin: &Path) -> Result<bool> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        Command::new(codex_bin)
+            .args(["app-server", "--managed-daemon", "--help"])
+            .env("NO_COLOR", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .context("managed-daemon capability probe timed out; retry after checking the executable")?
+    .context("managed-daemon capability probe could not run")?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.code() == Some(2) && stderr.contains("unexpected argument '--managed-daemon'")
+    {
+        return Ok(false);
+    }
+    bail!(
+        "managed-daemon capability probe failed with {}; support remains unknown",
+        output.status
+    )
 }
