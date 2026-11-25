@@ -197,6 +197,12 @@ async fn mcp_server_status_discovers_thread_inventory(
 ) -> Result<()> {
     let (server, tool) = recording_widget_server().await;
     let codex_home = TempDir::new()?;
+    let fixture_owner = codex_home
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     mock_responses_config(&server.uri())
         .with_root_config("mcp_oauth_credentials_store = \"file\"")
         .with_extra_config(&format!(
@@ -206,6 +212,7 @@ async fn mcp_server_status_discovers_thread_inventory(
         .write(codex_home.path())?;
     let mut app = TestAppServer::builder()
         .with_codex_home(codex_home.path())
+        .with_env_overrides(&[("CODEX_DIAGNOSTIC_MCP_FIXTURE_OWNER", Some(&fixture_owner))])
         .build_initialized()
         .await?;
     let thread = app.start_thread(ThreadStartParams::default()).await?.thread;
@@ -272,6 +279,28 @@ async fn mcp_server_status_discovers_thread_inventory(
                 .filter(|request| matcher.matches(request))
                 .count()
         };
+        if count("initialize") != initializations {
+            let initialize_owners = requests
+                .iter()
+                .filter_map(|request| {
+                    let body: serde_json::Value = serde_json::from_slice(&request.body).ok()?;
+                    (body["method"] == "initialize").then(|| {
+                        json!({
+                            "id": body["id"],
+                            "clientVersion": body["params"]["clientInfo"]["version"],
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            eprintln!(
+                "MCP_OWNER_DIAGNOSTIC {}",
+                json!({
+                    "fixtureOwner": fixture_owner,
+                    "expectedInitializations": initializations,
+                    "initializeOwners": initialize_owners,
+                })
+            );
+        }
         assert_eq!(count("initialize"), initializations);
         assert_eq!(count("tools/list"), initializations);
         match detail {

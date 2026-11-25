@@ -1638,6 +1638,13 @@ impl RmcpClient {
         let client_service = || {
             let send_elicitation = Arc::clone(&initialize_context.send_elicitation);
             let mut info = initialize_context.client_info.clone();
+            // Diagnostic branch only: tag this fixture's client after transport/auth
+            // selection. Do not change configured headers or OAuth routing.
+            if let Ok(owner) = std::env::var("CODEX_DIAGNOSTIC_MCP_FIXTURE_OWNER") {
+                info.client_info
+                    .version
+                    .push_str(&format!("+fixture-owner-{owner}"));
+            }
             if self.protocol_mode == McpProtocolMode::DiscoverLocalStdio {
                 info.protocol_version = McpProtocolMode::Legacy.preferred_protocol_version();
             }
