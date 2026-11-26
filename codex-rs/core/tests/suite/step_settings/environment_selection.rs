@@ -88,10 +88,9 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         })
         .build_with_auto_env(&server)
         .await?;
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    listener.set_nonblocking(true)?;
-    let resume_listener = TcpListener::from_std(listener.try_clone()?)?;
-    let listener = TcpListener::from_std(listener)?;
+    // Both connection phases share one socket and one Tokio registration.
+    let listener = Arc::new(TcpListener::bind("127.0.0.1:0").await?);
+    let resume_listener = Arc::clone(&listener);
     let remote_id = "watched";
     test.thread_manager
         .environment_manager()
