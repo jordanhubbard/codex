@@ -1042,6 +1042,9 @@ async fn yielded_code_mode_elicitation_keeps_live_invocation_metadata() -> Resul
         "node_repl": {
             "command": if cfg!(windows) { "python" } else { "python3" },
             "args": ["-u", "-c", ELICITATION_SERVER, meta.to_string(), "forward"],
+            // The replacement thread needs a live elicitation stream even if
+            // the first thread has already cached this server's tool catalog.
+            "required": true,
             "default_tools_approval_mode": "approve",
         }
     }))?;
