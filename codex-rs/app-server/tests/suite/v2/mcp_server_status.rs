@@ -295,14 +295,20 @@ async fn mcp_server_status_discovers_thread_inventory(
                     })
                 })
                 .collect::<Vec<_>>();
-            eprintln!(
-                "MCP_OWNER_DIAGNOSTIC {}",
-                json!({
-                    "fixtureOwner": fixture_owner,
-                    "expectedInitializations": initializations,
-                    "initializeOwners": initialize_owners,
-                })
-            );
+            // Bypass libtest's print capture so passing calibration is retained
+            // without changing the normal sharded test invocation.
+            std::io::Write::write_fmt(
+                &mut std::io::stderr().lock(),
+                format_args!(
+                    "MCP_OWNER_DIAGNOSTIC {}\n",
+                    json!({
+                        "fixtureOwner": fixture_owner,
+                        "expectedInitializations": initializations,
+                        "initializeOwners": initialize_owners,
+                    })
+                ),
+            )
+            .expect("write MCP ownership diagnostic");
         }
         assert_eq!(count("initialize"), initializations);
         assert_eq!(count("tools/list"), initializations);
