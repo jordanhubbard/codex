@@ -1067,6 +1067,7 @@ async fn yielded_code_mode_elicitation_keeps_live_invocation_metadata() -> Resul
             config.mcp_servers.set(mcp_servers).unwrap();
         });
     let mut test = builder.build_with_auto_env(&server).await?;
+    wait_for_mcp_server(&test.codex, "node_repl").await?;
     let metrics = MetricsClient::new(
         MetricsConfig::in_memory("test", "test", "1", Default::default()).with_runtime_reader(),
     )?;
