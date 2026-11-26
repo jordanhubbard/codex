@@ -90,7 +90,8 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         .await?;
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
-    let resume_listener = TcpListener::from_std(listener.try_clone()?)?;
+    // Keep the port bound without registering both socket handles with Tokio.
+    let resume_listener = listener.try_clone()?;
     let listener = TcpListener::from_std(listener)?;
     let remote_id = "watched";
     test.thread_manager
@@ -196,6 +197,7 @@ async fn check_connection_events_for_active_selection(scheduler_idle: Arc<Notify
         .send(())
         .expect("exec-server should be connected when the test requests a disconnect");
     executor.await?;
+    let resume_listener = TcpListener::from_std(resume_listener)?;
     let (disconnect, stop) = oneshot::channel();
     let resumed_executor = tokio::spawn(serve_resumed_environment_with_agents_md(
         resume_listener,
