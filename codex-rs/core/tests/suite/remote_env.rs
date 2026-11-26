@@ -136,6 +136,7 @@ use http::HeaderMap;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -1440,9 +1441,9 @@ async fn read_exec_server_json(websocket: &mut WebSocketStream<TcpStream>) -> Va
 }
 
 pub(super) async fn accept_initialized_exec_server(
-    listener: TcpListener,
+    listener: impl Borrow<TcpListener> + Send,
 ) -> WebSocketStream<TcpStream> {
-    let (stream, _) = listener.accept().await.expect("connection");
+    let (stream, _) = listener.borrow().accept().await.expect("connection");
     let mut websocket = accept_async(stream).await.expect("websocket handshake");
 
     let initialize = read_exec_server_json(&mut websocket).await;
@@ -1481,7 +1482,7 @@ async fn send_environment_info(websocket: &mut WebSocketStream<TcpStream>) {
 }
 
 pub(super) async fn serve_environment_with_agents_md(
-    listener: TcpListener,
+    listener: impl Borrow<TcpListener> + Send,
     contents: &str,
     attach: tokio::sync::oneshot::Receiver<()>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
@@ -1493,7 +1494,7 @@ pub(super) async fn serve_environment_with_agents_md(
 }
 
 async fn serve_environment_with_instruction_files(
-    listener: TcpListener,
+    listener: impl Borrow<TcpListener> + Send,
     contents: &str,
     skill: Option<&str>,
     attach: tokio::sync::oneshot::Receiver<()>,
@@ -1507,7 +1508,7 @@ async fn serve_environment_with_instruction_files(
 
 /// Keep serving filesystem requests after a resumed transport completes initialization.
 pub(super) async fn serve_resumed_environment_with_agents_md(
-    listener: TcpListener,
+    listener: impl Borrow<TcpListener> + Send,
     contents: &str,
     shutdown: tokio::sync::oneshot::Receiver<()>,
 ) -> usize {
