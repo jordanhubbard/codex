@@ -151,7 +151,9 @@ async fn desktop_socket_mcp_startup(
 }
 
 async fn recording_widget_server() -> (MockServer, serde_json::Value) {
-    let server = MockServer::start().await;
+    // These request counts belong to this fixture. Keep its listener out of
+    // the pool so clients holding an earlier fixture's URI cannot reach it.
+    let server = MockServer::builder().start().await;
     let tool = json!({
         "name": "open_widget",
         "title": "Open widget",
